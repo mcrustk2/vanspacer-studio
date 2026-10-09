@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v6.0 Complete] Van Spacer Studio - Live 3D Builder</title>
+    <title>[v6.1] Van Spacer Studio - Live 3D Builder</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
@@ -50,6 +50,9 @@
         .item-card:hover { border-color: #38bdf8; background: #1e293b; }
         .item-card strong { display: block; color: #f8fafc; margin-bottom: 2px; }
 
+        .gizmo-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px; }
+        .gizmo-controls button { font-size: 0.75rem; padding: 6px; }
+
         #info-banner {
             position: absolute; bottom: 20px; left: 20px; background: rgba(15, 23, 42, 0.9);
             padding: 12px 20px; border-radius: 8px; border: 1px solid #334155; font-size: 0.82rem; color: #94a3b8;
@@ -57,9 +60,10 @@
         }
         .highlight { color: #38bdf8; font-weight: 700; }
     </style>
-    <!-- Three.js + GLTFLoader & DRACOLoader -->
+    <!-- Three.js + GLTFLoader, DRACOLoader & TransformControls -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/TransformControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/GLTFLoader.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/DRACOLoader.js"></script>
 </head>
@@ -69,7 +73,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v6.0 Complete Engine</span>
+            <span class="version-tag">v6.1 Gizmo Engine</span>
         </div>
 
         <div class="accordion-item">
@@ -149,6 +153,15 @@
                         <span style="color:#64748b;">0.6m x 0.5m</span>
                     </div>
                 </div>
+
+                <div style="margin-top: 10px; border-top: 1px solid #334155; padding-top: 8px;">
+                    <label>Furniture Gizmo Mode</label>
+                    <div class="gizmo-controls">
+                        <button id="mode-translate" class="active" onclick="setGizmoMode('translate')">Move (Position)</button>
+                        <button id="mode-scale" onclick="setGizmoMode('scale')">Scale (Size)</button>
+                    </div>
+                    <button style="margin-top: 6px; background: #dc2626; border-color: #ef4444;" onclick="deleteSelectedFurniture()">Delete Selected Piece</button>
+                </div>
             </div>
         </div>
     </div>
@@ -158,12 +171,12 @@
     </div>
 
     <script>
-        let renderer, camera, controls, clipPlane, vanGroup = null;
+        let renderer, camera, scene, controls, transformControls, clipPlane, vanGroup = null;
         let bodyMaterial, rimMaterial, tyreMaterial, glassMaterial, seatMaterial;
         let rimMeshes = [], tyreMeshes = [], bulkheadMeshes = [];
-        let furnitureObjects = [];
+        let furnitureObjects = [], selectedFurniture = null;
         let clippingEnabled = true, bulkheadVisible = true, measureMode = false;
-        let measurePoints = [], measureLine = null;
+        let measurePoints = [], activeLaserGroup = null;
         let raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
 
         function toggleAccordion(header) { header.parentElement.classList.toggle('collapsed'); }
@@ -182,13 +195,46 @@
         function toggleMeasureTool() {
             measureMode = !measureMode;
             measurePoints = [];
-            if (measureLine) { scene.remove(measureLine); measureLine = null; }
             const btn = document.getElementById('measure-toggle');
-            if (btn) {
-                btn.innerText = measureMode ? "Laser Measure: ON (Click 2 Points)" : "Laser Measure: OFF";
-                btn.style.background = measureMode ? "#ef4444" : "#0284c7";
+            
+            if (!measureMode) {
+                // Toggled off: Clear all persistent red laser lines
+                if (activeLaserGroup) {
+                    scene.remove(activeLaserGroup);
+                    activeLaserGroup = null;
+                }
+                if (btn) {
+                    btn.innerText = "Laser Measure: OFF";
+                    btn.style.background = "#0284c7";
+                }
+                document.getElementById('status-text').innerText = "Laser Tool Disabled & Lines Cleared";
+            } else {
+                if (!activeLaserGroup) {
+                    activeLaserGroup = new THREE.Group();
+                    scene.add(activeLaserGroup);
+                }
+                if (btn) {
+                    btn.innerText = "Laser Measure: ON (Click Points)";
+                    btn.style.background = "#ef4444";
+                }
+                document.getElementById('status-text').innerText = "Click any 2 points on van to retain laser line";
             }
-            document.getElementById('status-text').innerText = measureMode ? "Click any 2 surface points to measure laser distance" : "Laser Measure Disabled";
+        }
+
+        function setGizmoMode(mode) {
+            if (transformControls) transformControls.setMode(mode);
+            document.getElementById('mode-translate').classList.toggle('active', mode === 'translate');
+            document.getElementById('mode-scale').classList.toggle('active', mode === 'scale');
+        }
+
+        function deleteSelectedFurniture() {
+            if (selectedFurniture) {
+                transformControls.detach();
+                scene.remove(selectedFurniture);
+                furnitureObjects = furnitureObjects.filter(o => o !== selectedFurniture);
+                selectedFurniture = null;
+                document.getElementById('status-text').innerText = "Deleted Selected Furniture Piece";
+            }
         }
 
         function changeVanColor(hexStr) {
@@ -237,9 +283,9 @@
         }
 
         function spawnFurniture(type) {
-            if (!vanGroup) return;
+            if (!scene) return;
 
-            let geom, mat, color;
+            let geom, color;
             if (type === 'bed') {
                 geom = new THREE.BoxGeometry(1.4, 0.45, 1.8);
                 color = 0x3b82f6;
@@ -254,48 +300,67 @@
                 color = 0x8b5cf6;
             }
 
-            mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.5 });
+            const mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.5 });
             const item = new THREE.Mesh(geom, mat);
-            item.position.set(0, 0.3, -0.5);
+            item.position.set(0, 0.35, -0.5);
             scene.add(item);
             furnitureObjects.push(item);
 
-            document.getElementById('status-text').innerText = `Added 3D ${type.toUpperCase()} onto van bed floor!`;
+            // Select new furniture item immediately
+            selectedFurniture = item;
+            transformControls.attach(item);
+
+            document.getElementById('status-text').innerText = `Placed 3D ${type.toUpperCase()}. Drag handles to move/scale!`;
         }
 
         window.addEventListener('click', (event) => {
-            if (!measureMode || !vanGroup || !camera) return;
+            // Ignore UI sidebar clicks
+            if (event.clientX > window.innerWidth - 340) return;
+            if (!camera || !scene) return;
 
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
             raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObjects(vanGroup.children, true);
 
-            if (intersects.length > 0) {
-                const p = intersects[0].point;
-                measurePoints.push(p);
+            // Handle Laser Measuring Tool
+            if (measureMode && vanGroup) {
+                const intersects = raycaster.intersectObjects(vanGroup.children, true);
+                if (intersects.length > 0) {
+                    const p = intersects[0].point;
+                    measurePoints.push(p);
 
-                if (measurePoints.length === 2) {
-                    const dist = measurePoints[0].distanceTo(measurePoints[1]);
-                    const mm = (dist * 1000).toFixed(0);
-                    const meters = dist.toFixed(2);
+                    if (measurePoints.length === 2) {
+                        const dist = measurePoints[0].distanceTo(measurePoints[1]);
+                        const mm = (dist * 1000).toFixed(0);
+                        const meters = dist.toFixed(2);
 
-                    const lineGeom = new THREE.BufferGeometry().setFromPoints(measurePoints);
-                    const lineMat = new THREE.LineBasicMaterial({ color: 0xef4444, linewidth: 4 });
-                    if (measureLine) scene.remove(measureLine);
-                    measureLine = new THREE.Line(lineGeom, lineMat);
-                    scene.add(measureLine);
+                        // Persistent Line
+                        const lineGeom = new THREE.BufferGeometry().setFromPoints(measurePoints);
+                        const lineMat = new THREE.LineBasicMaterial({ color: 0xef4444, linewidth: 5 });
+                        const laserLine = new THREE.Line(lineGeom, lineMat);
+                        
+                        if (activeLaserGroup) activeLaserGroup.add(laserLine);
 
-                    document.getElementById('status-text').innerText = `Laser Distance: ${meters}m (${mm} mm)`;
-                    measurePoints = [];
-                } else {
-                    document.getElementById('status-text').innerText = `First Point Set! Click second point to measure.`;
+                        document.getElementById('status-text').innerText = `Laser Line Retained: ${meters}m (${mm} mm)`;
+                        measurePoints = [];
+                    } else {
+                        document.getElementById('status-text').innerText = `Point 1 Set! Click Point 2 to create red laser line.`;
+                    }
+                }
+                return;
+            }
+
+            // Handle Selecting Furniture Objects
+            if (furnitureObjects.length > 0) {
+                const furnitureHits = raycaster.intersectObjects(furnitureObjects, true);
+                if (furnitureHits.length > 0) {
+                    selectedFurniture = furnitureHits[0].object;
+                    transformControls.attach(selectedFurniture);
+                    document.getElementById('status-text').innerText = "Selected Furniture Piece - Use handles to Move/Scale";
                 }
             }
         });
-
-        let scene;
 
         window.addEventListener('DOMContentLoaded', () => {
             const container = document.getElementById('canvas-container');
@@ -318,6 +383,13 @@
                 controls = new THREE.OrbitControls(camera, renderer.domElement);
                 controls.enableDamping = true;
                 controls.target.set(0, 0.8, 0);
+
+                // Transform Controls for Moving / Scaling Furniture
+                transformControls = new THREE.TransformControls(camera, renderer.domElement);
+                transformControls.addEventListener('dragging-changed', (event) => {
+                    controls.enabled = !event.value; // Disable orbit control while dragging gizmo
+                });
+                scene.add(transformControls);
 
                 clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1.45);
 
@@ -388,7 +460,7 @@
                     });
 
                     scene.add(vanGroup);
-                    statusText.innerText = "Loaded Transit Custom - v6.0 Complete Active!";
+                    statusText.innerText = "Loaded Transit Custom - v6.1 Active!";
                 }
 
                 gltfLoader.load(
