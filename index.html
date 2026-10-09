@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v5.9 Diagnostic] Van Spacer Studio - Live 3D Builder</title>
+    <title>[v6.0 Complete] Van Spacer Studio - Live 3D Builder</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
@@ -69,7 +69,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v5.9 Diagnostic</span>
+            <span class="version-tag">v6.0 Complete Engine</span>
         </div>
 
         <div class="accordion-item">
@@ -123,7 +123,7 @@
                     <button id="bulkhead-toggle" onclick="toggleBulkhead()">Bulkhead: Included</button>
                 </div>
                 <div>
-                    <button id="inspect-toggle" style="background:#475569; margin-top:6px;" onclick="toggleInspectorMode()">Mesh Inspector: OFF</button>
+                    <button id="measure-toggle" style="background:#0284c7; margin-top:6px;" onclick="toggleMeasureTool()">Laser Measure: OFF</button>
                 </div>
             </div>
         </div>
@@ -132,19 +132,19 @@
             <div class="accordion-header" onclick="toggleAccordion(this)">2. Asset Library</div>
             <div class="accordion-content">
                 <div class="library-grid">
-                    <div class="item-card" onclick="addFurniture('Fixed Platform Bed')">
+                    <div class="item-card" onclick="spawnFurniture('bed')">
                         <strong>Fixed Platform Bed</strong>
                         <span style="color:#64748b;">1.8m x 1.4m</span>
                     </div>
-                    <div class="item-card" onclick="addFurniture('Kitchenette Unit')">
+                    <div class="item-card" onclick="spawnFurniture('kitchen')">
                         <strong>Kitchenette Unit</strong>
                         <span style="color:#64748b;">1.2m x 0.5m</span>
                     </div>
-                    <div class="item-card" onclick="addFurniture('Bench / Sofa Bed')">
+                    <div class="item-card" onclick="spawnFurniture('sofa')">
                         <strong>Bench / Sofa Bed</strong>
                         <span style="color:#64748b;">1.5m x 0.6m</span>
                     </div>
-                    <div class="item-card" onclick="addFurniture('Tall Cabinet')">
+                    <div class="item-card" onclick="spawnFurniture('cabinet')">
                         <strong>Tall Cabinet</strong>
                         <span style="color:#64748b;">0.6m x 0.5m</span>
                     </div>
@@ -159,9 +159,11 @@
 
     <script>
         let renderer, camera, controls, clipPlane, vanGroup = null;
-        let bodyMaterial, rimMaterial, tyreMaterial, glassMaterial, seatMaterial, highlightMaterial;
+        let bodyMaterial, rimMaterial, tyreMaterial, glassMaterial, seatMaterial;
         let rimMeshes = [], tyreMeshes = [], bulkheadMeshes = [];
-        let clippingEnabled = true, bulkheadVisible = true, inspectorMode = false;
+        let furnitureObjects = [];
+        let clippingEnabled = true, bulkheadVisible = true, measureMode = false;
+        let measurePoints = [], measureLine = null;
         let raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
 
         function toggleAccordion(header) { header.parentElement.classList.toggle('collapsed'); }
@@ -177,70 +179,43 @@
             document.getElementById('status-text').innerText = clippingEnabled ? "Roof Cutaway Active" : "Full Van Active";
         }
 
-        function toggleInspectorMode() {
-            inspectorMode = !inspectorMode;
-            const btn = document.getElementById('inspect-toggle');
+        function toggleMeasureTool() {
+            measureMode = !measureMode;
+            measurePoints = [];
+            if (measureLine) { scene.remove(measureLine); measureLine = null; }
+            const btn = document.getElementById('measure-toggle');
             if (btn) {
-                btn.innerText = inspectorMode ? "Mesh Inspector: ON (Click Mesh)" : "Mesh Inspector: OFF";
-                btn.style.background = inspectorMode ? "#eab308" : "#475569";
-                btn.style.color = inspectorMode ? "#000" : "#fff";
+                btn.innerText = measureMode ? "Laser Measure: ON (Click 2 Points)" : "Laser Measure: OFF";
+                btn.style.background = measureMode ? "#ef4444" : "#0284c7";
             }
-            document.getElementById('status-text').innerText = inspectorMode ? "Inspector Active: Click any part on the van" : "Inspector Deactivated";
+            document.getElementById('status-text').innerText = measureMode ? "Click any 2 surface points to measure laser distance" : "Laser Measure Disabled";
         }
 
         function changeVanColor(hexStr) {
-            if (bodyMaterial) {
-                bodyMaterial.color.setHex(parseInt(hexStr, 16));
-                document.getElementById('status-text').innerText = "Updated Van Paint Colour!";
-            }
+            if (bodyMaterial) bodyMaterial.color.setHex(parseInt(hexStr, 16));
         }
 
         function changeRimColor(hexStr) {
             const hex = parseInt(hexStr, 16);
             if (rimMaterial) rimMaterial.color.setHex(hex);
-            rimMeshes.forEach(mesh => {
-                if (mesh.material) {
-                    if (Array.isArray(mesh.material)) mesh.material.forEach(m => m.color.setHex(hex));
-                    else mesh.material.color.setHex(hex);
-                }
-            });
-            document.getElementById('status-text').innerText = "Updated Wheel Rim Colour!";
+            rimMeshes.forEach(m => m.material && m.material.color.setHex(hex));
         }
 
         function changeTyreColor(hexStr) {
             const hex = parseInt(hexStr, 16);
             if (tyreMaterial) tyreMaterial.color.setHex(hex);
-            tyreMeshes.forEach(mesh => {
-                if (mesh.material) {
-                    if (Array.isArray(mesh.material)) mesh.material.forEach(m => m.color.setHex(hex));
-                    else mesh.material.color.setHex(hex);
-                }
-            });
-            document.getElementById('status-text').innerText = "Updated Tyre Rubber Colour!";
+            tyreMeshes.forEach(m => m.material && m.material.color.setHex(hex));
         }
 
         function toggleBulkhead() {
             if (!vanGroup) return;
             bulkheadVisible = !bulkheadVisible;
-
-            bulkheadMeshes.forEach(mesh => { mesh.visible = bulkheadVisible; });
-
-            // Traversal check
-            vanGroup.traverse((child) => {
-                if (child.isMesh) {
-                    const name = child.name.toLowerCase();
-                    if (name.includes('bulkhead') || name.includes('partition') || name.includes('divider') || name.includes('wall_front') || name.includes('cab_wall') || name.includes('sep_')) {
-                        child.visible = bulkheadVisible;
-                    }
-                }
-            });
-
+            bulkheadMeshes.forEach(mesh => mesh.visible = bulkheadVisible);
             const btn = document.getElementById('bulkhead-toggle');
             if (btn) {
                 btn.innerText = bulkheadVisible ? "Bulkhead: Included" : "Bulkhead: Hidden";
                 btn.classList.toggle('active', !bulkheadVisible);
             }
-            document.getElementById('status-text').innerText = bulkheadVisible ? "Bulkhead Visible" : "Bulkhead Hidden";
         }
 
         function setViewMode(mode) {
@@ -259,16 +234,38 @@
                 }
                 controls.update();
             }
-            document.getElementById('status-text').innerText = mode === 'top' ? "2D Top Floorplan Active" : "3D Orbit Active";
         }
 
-        function addFurniture(name) {
-            document.getElementById('status-text').innerText = `Selected ${name}`;
+        function spawnFurniture(type) {
+            if (!vanGroup) return;
+
+            let geom, mat, color;
+            if (type === 'bed') {
+                geom = new THREE.BoxGeometry(1.4, 0.45, 1.8);
+                color = 0x3b82f6;
+            } else if (type === 'kitchen') {
+                geom = new THREE.BoxGeometry(0.5, 0.85, 1.2);
+                color = 0x10b981;
+            } else if (type === 'sofa') {
+                geom = new THREE.BoxGeometry(0.6, 0.45, 1.5);
+                color = 0xf59e0b;
+            } else {
+                geom = new THREE.BoxGeometry(0.5, 1.4, 0.6);
+                color = 0x8b5cf6;
+            }
+
+            mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.5 });
+            const item = new THREE.Mesh(geom, mat);
+            item.position.set(0, 0.3, -0.5);
+            scene.add(item);
+            furnitureObjects.push(item);
+
+            document.getElementById('status-text').innerText = `Added 3D ${type.toUpperCase()} onto van bed floor!`;
         }
 
         window.addEventListener('click', (event) => {
-            if (!inspectorMode || !vanGroup || !camera) return;
-            
+            if (!measureMode || !vanGroup || !camera) return;
+
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
@@ -276,30 +273,36 @@
             const intersects = raycaster.intersectObjects(vanGroup.children, true);
 
             if (intersects.length > 0) {
-                const hitMesh = intersects[0].object;
-                console.log("INSPECTED MESH:", {
-                    name: hitMesh.name,
-                    uuid: hitMesh.uuid,
-                    parent: hitMesh.parent ? hitMesh.parent.name : "root",
-                    vertices: hitMesh.geometry ? hitMesh.geometry.attributes.position.count : "N/A",
-                    material: hitMesh.material
-                });
-                
-                // Temporary Highlight
-                const origMat = hitMesh.material;
-                hitMesh.material = highlightMaterial;
-                setTimeout(() => { hitMesh.material = origMat; }, 1200);
+                const p = intersects[0].point;
+                measurePoints.push(p);
 
-                document.getElementById('status-text').innerText = `Inspected: "${hitMesh.name}" (${hitMesh.geometry.attributes.position.count} verts)`;
+                if (measurePoints.length === 2) {
+                    const dist = measurePoints[0].distanceTo(measurePoints[1]);
+                    const mm = (dist * 1000).toFixed(0);
+                    const meters = dist.toFixed(2);
+
+                    const lineGeom = new THREE.BufferGeometry().setFromPoints(measurePoints);
+                    const lineMat = new THREE.LineBasicMaterial({ color: 0xef4444, linewidth: 4 });
+                    if (measureLine) scene.remove(measureLine);
+                    measureLine = new THREE.Line(lineGeom, lineMat);
+                    scene.add(measureLine);
+
+                    document.getElementById('status-text').innerText = `Laser Distance: ${meters}m (${mm} mm)`;
+                    measurePoints = [];
+                } else {
+                    document.getElementById('status-text').innerText = `First Point Set! Click second point to measure.`;
+                }
             }
         });
+
+        let scene;
 
         window.addEventListener('DOMContentLoaded', () => {
             const container = document.getElementById('canvas-container');
             const statusText = document.getElementById('status-text');
 
             try {
-                const scene = new THREE.Scene();
+                scene = new THREE.Scene();
                 scene.background = new THREE.Color(0xe2e8f0);
 
                 camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
@@ -318,17 +321,13 @@
 
                 clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1.45);
 
-                // Lighting
+                // Studio Lights
                 const ambient = new THREE.AmbientLight(0xffffff, 0.8);
                 scene.add(ambient);
 
                 const sunLight = new THREE.DirectionalLight(0xffffff, 1.4);
                 sunLight.position.set(10, 18, 10);
                 scene.add(sunLight);
-
-                const fillLight = new THREE.DirectionalLight(0xffffff, 0.7);
-                fillLight.position.set(-10, 12, -10);
-                scene.add(fillLight);
 
                 const grid = new THREE.GridHelper(14, 28, 0x0284c7, 0xc2c7d0);
                 grid.position.y = -0.01;
@@ -341,66 +340,24 @@
                 dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/libs/draco/');
                 gltfLoader.setDRACOLoader(dracoLoader);
 
-                // Materials
                 bodyMaterial = new THREE.MeshStandardMaterial({
-                    color: 0x4b5563,
-                    roughness: 0.45,
-                    metalness: 0.35,
-                    side: THREE.DoubleSide,
-                    clippingPlanes: [clipPlane]
+                    color: 0x4b5563, roughness: 0.45, metalness: 0.35, side: THREE.DoubleSide, clippingPlanes: [clipPlane]
                 });
-
                 tyreMaterial = new THREE.MeshStandardMaterial({
-                    color: 0x111827,
-                    roughness: 0.9,
-                    metalness: 0.05,
-                    side: THREE.DoubleSide,
-                    clippingPlanes: [clipPlane]
+                    color: 0x111827, roughness: 0.9, metalness: 0.05, side: THREE.DoubleSide, clippingPlanes: [clipPlane]
                 });
-
                 rimMaterial = new THREE.MeshStandardMaterial({
-                    color: 0x9ca3af,
-                    roughness: 0.3,
-                    metalness: 0.7,
-                    side: THREE.DoubleSide,
-                    clippingPlanes: [clipPlane]
+                    color: 0x9ca3af, roughness: 0.3, metalness: 0.7, side: THREE.DoubleSide, clippingPlanes: [clipPlane]
                 });
-
                 glassMaterial = new THREE.MeshStandardMaterial({
-                    color: 0xffffff,
-                    transparent: true,
-                    opacity: 0.35,
-                    roughness: 0.1,
-                    metalness: 0.9,
-                    side: THREE.DoubleSide,
-                    clippingPlanes: [clipPlane]
+                    color: 0xffffff, transparent: true, opacity: 0.35, roughness: 0.1, metalness: 0.9, side: THREE.DoubleSide, clippingPlanes: [clipPlane]
                 });
-
                 seatMaterial = new THREE.MeshStandardMaterial({
-                    color: 0x374151,
-                    roughness: 0.7,
-                    metalness: 0.1,
-                    side: THREE.DoubleSide,
-                    clippingPlanes: [clipPlane]
-                });
-
-                highlightMaterial = new THREE.MeshBasicMaterial({
-                    color: 0xfacc15, // Bright yellow inspector flash
-                    side: THREE.DoubleSide,
-                    wireframe: true
-                });
-
-                const dashboardMaterial = new THREE.MeshStandardMaterial({
-                    color: 0x1f2937,
-                    roughness: 0.85,
-                    metalness: 0.05,
-                    side: THREE.DoubleSide,
-                    clippingPlanes: [clipPlane]
+                    color: 0x374151, roughness: 0.7, metalness: 0.1, side: THREE.DoubleSide, clippingPlanes: [clipPlane]
                 });
 
                 function processAndAddGLB(gltf) {
                     vanGroup = gltf.scene;
-
                     vanGroup.rotation.x = -Math.PI / 2;
 
                     const box = new THREE.Box3().setFromObject(vanGroup);
@@ -414,64 +371,32 @@
                     vanGroup.position.y = -scaledBox.min.y;
                     vanGroup.position.z = -scaledCenter.z;
 
-                    rimMeshes = [];
-                    tyreMeshes = [];
-                    bulkheadMeshes = [];
-
-                    console.log("=== CAD MESH TREE INSPECTOR LOG ===");
+                    rimMeshes = []; tyreMeshes = []; bulkheadMeshes = [];
 
                     vanGroup.traverse((child) => {
                         if (child.isMesh) {
                             child.geometry.computeVertexNormals();
                             const name = child.name.toLowerCase();
-                            console.log(`Node Name: "${child.name}" | Verts: ${child.geometry.attributes.position.count}`);
 
-                            if (name.includes('bulkhead') || name.includes('partition') || name.includes('divider') || name.includes('wall_front') || name.includes('cab_wall') || name.includes('sep_')) {
-                                bulkheadMeshes.push(child);
-                            }
-
-                            if (name.includes('glass') || name.includes('windscreen') || name.includes('window')) {
-                                child.material = glassMaterial;
-                            } else if (name.includes('seat') || name.includes('chair') || name.includes('cushion')) {
-                                child.material = seatMaterial;
-                            } else if (name.includes('tire') || name.includes('tyre') || name.includes('rubber')) {
-                                child.material = tyreMaterial.clone();
-                                tyreMeshes.push(child);
-                            } else if (name.includes('rim') || name.includes('wheel') || name.includes('alloy') || name.includes('hub')) {
-                                child.material = rimMaterial.clone();
-                                rimMeshes.push(child);
-                            } else if (name.includes('dashboard') || name.includes('steering')) {
-                                child.material = dashboardMaterial;
-                            } else {
-                                child.material = bodyMaterial;
-                            }
+                            if (name.includes('bulkhead')) bulkheadMeshes.push(child);
+                            if (name.includes('rims') || name.includes('rim')) { child.material = rimMaterial; rimMeshes.push(child); }
+                            else if (name.includes('tyres') || name.includes('tyre') || name.includes('tire')) { child.material = tyreMaterial; tyreMeshes.push(child); }
+                            else if (name.includes('glass') || name.includes('window') || name.includes('windscreen')) child.material = glassMaterial;
+                            else if (name.includes('seat')) child.material = seatMaterial;
+                            else child.material = bodyMaterial;
                         }
                     });
 
                     scene.add(vanGroup);
-                    statusText.innerText = "Loaded Transit Custom - v5.9 Active!";
+                    statusText.innerText = "Loaded Transit Custom - v6.0 Complete Active!";
                 }
 
                 gltfLoader.load(
                     'assets/models/ford-transit-custom-optimized.glb',
                     (gltf) => processAndAddGLB(gltf),
-                    (xhr) => {
-                        if (xhr.lengthComputable) {
-                            const percent = (xhr.loaded / xhr.total) * 100;
-                            statusText.innerText = `Loading 3D Model: ${percent.toFixed(0)}%`;
-                        }
-                    },
-                    (err) => {
-                        console.warn("Optimized path failed, trying fallback path...", err);
-                        gltfLoader.load(
-                            'assets/models/ford-transit-custom-optimised.glb',
-                            (gltf) => processAndAddGLB(gltf),
-                            undefined,
-                            (err2) => {
-                                console.error("All GLB paths failed:", err2);
-                                statusText.innerText = "Error: GLB file missing in assets/models/";
-                            }
-                        );
+                    undefined,
+                    () => {
+                        gltfLoader.load('assets/models/ford-transit-custom-optimised.glb', (gltf) => processAndAddGLB(gltf));
                     }
                 );
 
@@ -489,8 +414,7 @@
                 animate();
 
             } catch (err) {
-                console.error("3D Studio Startup Error:", err);
-                statusText.innerText = "Engine Error: " + err.message;
+                console.error(err);
             }
         });
     </script>
