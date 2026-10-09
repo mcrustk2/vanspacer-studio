@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v5.8] Van Spacer Studio - Live 3D Builder</title>
+    <title>[v5.9 Diagnostic] Van Spacer Studio - Live 3D Builder</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
@@ -69,7 +69,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v5.8 Wheels & Bulkhead</span>
+            <span class="version-tag">v5.9 Diagnostic</span>
         </div>
 
         <div class="accordion-item">
@@ -122,6 +122,9 @@
                 <div>
                     <button id="bulkhead-toggle" onclick="toggleBulkhead()">Bulkhead: Included</button>
                 </div>
+                <div>
+                    <button id="inspect-toggle" style="background:#475569; margin-top:6px;" onclick="toggleInspectorMode()">Mesh Inspector: OFF</button>
+                </div>
             </div>
         </div>
 
@@ -156,9 +159,10 @@
 
     <script>
         let renderer, camera, controls, clipPlane, vanGroup = null;
-        let bodyMaterial, rimMaterial, tyreMaterial, glassMaterial, seatMaterial;
+        let bodyMaterial, rimMaterial, tyreMaterial, glassMaterial, seatMaterial, highlightMaterial;
         let rimMeshes = [], tyreMeshes = [], bulkheadMeshes = [];
-        let clippingEnabled = true, bulkheadVisible = true;
+        let clippingEnabled = true, bulkheadVisible = true, inspectorMode = false;
+        let raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
 
         function toggleAccordion(header) { header.parentElement.classList.toggle('collapsed'); }
 
@@ -173,6 +177,17 @@
             document.getElementById('status-text').innerText = clippingEnabled ? "Roof Cutaway Active" : "Full Van Active";
         }
 
+        function toggleInspectorMode() {
+            inspectorMode = !inspectorMode;
+            const btn = document.getElementById('inspect-toggle');
+            if (btn) {
+                btn.innerText = inspectorMode ? "Mesh Inspector: ON (Click Mesh)" : "Mesh Inspector: OFF";
+                btn.style.background = inspectorMode ? "#eab308" : "#475569";
+                btn.style.color = inspectorMode ? "#000" : "#fff";
+            }
+            document.getElementById('status-text').innerText = inspectorMode ? "Inspector Active: Click any part on the van" : "Inspector Deactivated";
+        }
+
         function changeVanColor(hexStr) {
             if (bodyMaterial) {
                 bodyMaterial.color.setHex(parseInt(hexStr, 16));
@@ -181,32 +196,24 @@
         }
 
         function changeRimColor(hexStr) {
-            if (rimMaterial) {
-                rimMaterial.color.setHex(parseInt(hexStr, 16));
-            }
+            const hex = parseInt(hexStr, 16);
+            if (rimMaterial) rimMaterial.color.setHex(hex);
             rimMeshes.forEach(mesh => {
                 if (mesh.material) {
-                    if (Array.isArray(mesh.material)) {
-                        mesh.material.forEach(m => m.color.setHex(parseInt(hexStr, 16)));
-                    } else {
-                        mesh.material.color.setHex(parseInt(hexStr, 16));
-                    }
+                    if (Array.isArray(mesh.material)) mesh.material.forEach(m => m.color.setHex(hex));
+                    else mesh.material.color.setHex(hex);
                 }
             });
             document.getElementById('status-text').innerText = "Updated Wheel Rim Colour!";
         }
 
         function changeTyreColor(hexStr) {
-            if (tyreMaterial) {
-                tyreMaterial.color.setHex(parseInt(hexStr, 16));
-            }
+            const hex = parseInt(hexStr, 16);
+            if (tyreMaterial) tyreMaterial.color.setHex(hex);
             tyreMeshes.forEach(mesh => {
                 if (mesh.material) {
-                    if (Array.isArray(mesh.material)) {
-                        mesh.material.forEach(m => m.color.setHex(parseInt(hexStr, 16)));
-                    } else {
-                        mesh.material.color.setHex(parseInt(hexStr, 16));
-                    }
+                    if (Array.isArray(mesh.material)) mesh.material.forEach(m => m.color.setHex(hex));
+                    else mesh.material.color.setHex(hex);
                 }
             });
             document.getElementById('status-text').innerText = "Updated Tyre Rubber Colour!";
@@ -216,16 +223,13 @@
             if (!vanGroup) return;
             bulkheadVisible = !bulkheadVisible;
 
-            // Direct match hide/show
-            bulkheadMeshes.forEach(mesh => {
-                mesh.visible = bulkheadVisible;
-            });
+            bulkheadMeshes.forEach(mesh => { mesh.visible = bulkheadVisible; });
 
-            // Fallback traverse for unindexed bulkhead components
+            // Traversal check
             vanGroup.traverse((child) => {
                 if (child.isMesh) {
                     const name = child.name.toLowerCase();
-                    if (name.includes('bulkhead') || name.includes('partition') || name.includes('divider') || name.includes('wall_front') || name.includes('cab_wall') || name.includes('interior_wall') || name.includes('sep_')) {
+                    if (name.includes('bulkhead') || name.includes('partition') || name.includes('divider') || name.includes('wall_front') || name.includes('cab_wall') || name.includes('sep_')) {
                         child.visible = bulkheadVisible;
                     }
                 }
@@ -233,10 +237,10 @@
 
             const btn = document.getElementById('bulkhead-toggle');
             if (btn) {
-                btn.innerText = bulkheadVisible ? "Bulkhead: Included" : "Bulkhead: Removed";
+                btn.innerText = bulkheadVisible ? "Bulkhead: Included" : "Bulkhead: Hidden";
                 btn.classList.toggle('active', !bulkheadVisible);
             }
-            document.getElementById('status-text').innerText = bulkheadVisible ? "Bulkhead Installed" : "Bulkhead Removed for Walk-Through";
+            document.getElementById('status-text').innerText = bulkheadVisible ? "Bulkhead Visible" : "Bulkhead Hidden";
         }
 
         function setViewMode(mode) {
@@ -262,6 +266,34 @@
             document.getElementById('status-text').innerText = `Selected ${name}`;
         }
 
+        window.addEventListener('click', (event) => {
+            if (!inspectorMode || !vanGroup || !camera) return;
+            
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(vanGroup.children, true);
+
+            if (intersects.length > 0) {
+                const hitMesh = intersects[0].object;
+                console.log("INSPECTED MESH:", {
+                    name: hitMesh.name,
+                    uuid: hitMesh.uuid,
+                    parent: hitMesh.parent ? hitMesh.parent.name : "root",
+                    vertices: hitMesh.geometry ? hitMesh.geometry.attributes.position.count : "N/A",
+                    material: hitMesh.material
+                });
+                
+                // Temporary Highlight
+                const origMat = hitMesh.material;
+                hitMesh.material = highlightMaterial;
+                setTimeout(() => { hitMesh.material = origMat; }, 1200);
+
+                document.getElementById('status-text').innerText = `Inspected: "${hitMesh.name}" (${hitMesh.geometry.attributes.position.count} verts)`;
+            }
+        });
+
         window.addEventListener('DOMContentLoaded', () => {
             const container = document.getElementById('canvas-container');
             const statusText = document.getElementById('status-text');
@@ -286,7 +318,7 @@
 
                 clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1.45);
 
-                // Studio Lighting
+                // Lighting
                 const ambient = new THREE.AmbientLight(0xffffff, 0.8);
                 scene.add(ambient);
 
@@ -309,9 +341,9 @@
                 dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/libs/draco/');
                 gltfLoader.setDRACOLoader(dracoLoader);
 
-                // Base Materials
+                // Materials
                 bodyMaterial = new THREE.MeshStandardMaterial({
-                    color: 0x4b5563,        // Steel Grey default
+                    color: 0x4b5563,
                     roughness: 0.45,
                     metalness: 0.35,
                     side: THREE.DoubleSide,
@@ -319,7 +351,7 @@
                 });
 
                 tyreMaterial = new THREE.MeshStandardMaterial({
-                    color: 0x111827,        // Matte Black Rubber
+                    color: 0x111827,
                     roughness: 0.9,
                     metalness: 0.05,
                     side: THREE.DoubleSide,
@@ -327,7 +359,7 @@
                 });
 
                 rimMaterial = new THREE.MeshStandardMaterial({
-                    color: 0x9ca3af,        // Silver Alloy default
+                    color: 0x9ca3af,
                     roughness: 0.3,
                     metalness: 0.7,
                     side: THREE.DoubleSide,
@@ -345,11 +377,17 @@
                 });
 
                 seatMaterial = new THREE.MeshStandardMaterial({
-                    color: 0x374151,        // Charcoal Leather
+                    color: 0x374151,
                     roughness: 0.7,
                     metalness: 0.1,
                     side: THREE.DoubleSide,
                     clippingPlanes: [clipPlane]
+                });
+
+                highlightMaterial = new THREE.MeshBasicMaterial({
+                    color: 0xfacc15, // Bright yellow inspector flash
+                    side: THREE.DoubleSide,
+                    wireframe: true
                 });
 
                 const dashboardMaterial = new THREE.MeshStandardMaterial({
@@ -380,17 +418,18 @@
                     tyreMeshes = [];
                     bulkheadMeshes = [];
 
+                    console.log("=== CAD MESH TREE INSPECTOR LOG ===");
+
                     vanGroup.traverse((child) => {
                         if (child.isMesh) {
                             child.geometry.computeVertexNormals();
                             const name = child.name.toLowerCase();
+                            console.log(`Node Name: "${child.name}" | Verts: ${child.geometry.attributes.position.count}`);
 
-                            // Bulkhead Indexing
-                            if (name.includes('bulkhead') || name.includes('partition') || name.includes('divider') || name.includes('wall_front') || name.includes('cab_wall') || name.includes('interior_wall') || name.includes('sep_')) {
+                            if (name.includes('bulkhead') || name.includes('partition') || name.includes('divider') || name.includes('wall_front') || name.includes('cab_wall') || name.includes('sep_')) {
                                 bulkheadMeshes.push(child);
                             }
 
-                            // Material & Mesh Assignment
                             if (name.includes('glass') || name.includes('windscreen') || name.includes('window')) {
                                 child.material = glassMaterial;
                             } else if (name.includes('seat') || name.includes('chair') || name.includes('cushion')) {
@@ -410,7 +449,7 @@
                     });
 
                     scene.add(vanGroup);
-                    statusText.innerText = "Loaded Transit Custom - v5.8 Active!";
+                    statusText.innerText = "Loaded Transit Custom - v5.9 Active!";
                 }
 
                 gltfLoader.load(
