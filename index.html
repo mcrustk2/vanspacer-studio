@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v5.7] Van Spacer Studio - Live 3D Builder</title>
+    <title>[v5.8] Van Spacer Studio - Live 3D Builder</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
@@ -69,7 +69,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v5.7 Resilient Engine</span>
+            <span class="version-tag">v5.8 Wheels & Bulkhead</span>
         </div>
 
         <div class="accordion-item">
@@ -103,6 +103,13 @@
                         <option value="0x9ca3af" selected>Silver Alloy</option>
                         <option value="0x111827">Gloss / Satin Black</option>
                         <option value="0x4b5563">Steel Grey</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="tyre-color">Tyre Rubber Colour</label>
+                    <select id="tyre-color" onchange="changeTyreColor(this.value)">
+                        <option value="0x111827" selected>Matte Black Rubber</option>
+                        <option value="0x1f2937">Dark Slate Tyre</option>
                     </select>
                 </div>
                 <div>
@@ -150,6 +157,7 @@
     <script>
         let renderer, camera, controls, clipPlane, vanGroup = null;
         let bodyMaterial, rimMaterial, tyreMaterial, glassMaterial, seatMaterial;
+        let rimMeshes = [], tyreMeshes = [], bulkheadMeshes = [];
         let clippingEnabled = true, bulkheadVisible = true;
 
         function toggleAccordion(header) { header.parentElement.classList.toggle('collapsed'); }
@@ -175,18 +183,49 @@
         function changeRimColor(hexStr) {
             if (rimMaterial) {
                 rimMaterial.color.setHex(parseInt(hexStr, 16));
-                document.getElementById('status-text').innerText = "Updated Wheel Rim Colour!";
             }
+            rimMeshes.forEach(mesh => {
+                if (mesh.material) {
+                    if (Array.isArray(mesh.material)) {
+                        mesh.material.forEach(m => m.color.setHex(parseInt(hexStr, 16)));
+                    } else {
+                        mesh.material.color.setHex(parseInt(hexStr, 16));
+                    }
+                }
+            });
+            document.getElementById('status-text').innerText = "Updated Wheel Rim Colour!";
+        }
+
+        function changeTyreColor(hexStr) {
+            if (tyreMaterial) {
+                tyreMaterial.color.setHex(parseInt(hexStr, 16));
+            }
+            tyreMeshes.forEach(mesh => {
+                if (mesh.material) {
+                    if (Array.isArray(mesh.material)) {
+                        mesh.material.forEach(m => m.color.setHex(parseInt(hexStr, 16)));
+                    } else {
+                        mesh.material.color.setHex(parseInt(hexStr, 16));
+                    }
+                }
+            });
+            document.getElementById('status-text').innerText = "Updated Tyre Rubber Colour!";
         }
 
         function toggleBulkhead() {
             if (!vanGroup) return;
             bulkheadVisible = !bulkheadVisible;
-            
+
+            // Direct match hide/show
+            bulkheadMeshes.forEach(mesh => {
+                mesh.visible = bulkheadVisible;
+            });
+
+            // Fallback traverse for unindexed bulkhead components
             vanGroup.traverse((child) => {
                 if (child.isMesh) {
                     const name = child.name.toLowerCase();
-                    if (name.includes('bulkhead') || name.includes('partition') || name.includes('divider') || name.includes('wall_front')) {
+                    if (name.includes('bulkhead') || name.includes('partition') || name.includes('divider') || name.includes('wall_front') || name.includes('cab_wall') || name.includes('interior_wall') || name.includes('sep_')) {
                         child.visible = bulkheadVisible;
                     }
                 }
@@ -270,7 +309,7 @@
                 dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/libs/draco/');
                 gltfLoader.setDRACOLoader(dracoLoader);
 
-                // Materials
+                // Base Materials
                 bodyMaterial = new THREE.MeshStandardMaterial({
                     color: 0x4b5563,        // Steel Grey default
                     roughness: 0.45,
@@ -280,7 +319,7 @@
                 });
 
                 tyreMaterial = new THREE.MeshStandardMaterial({
-                    color: 0x111827,
+                    color: 0x111827,        // Matte Black Rubber
                     roughness: 0.9,
                     metalness: 0.05,
                     side: THREE.DoubleSide,
@@ -288,7 +327,7 @@
                 });
 
                 rimMaterial = new THREE.MeshStandardMaterial({
-                    color: 0x9ca3af,
+                    color: 0x9ca3af,        // Silver Alloy default
                     roughness: 0.3,
                     metalness: 0.7,
                     side: THREE.DoubleSide,
@@ -337,19 +376,31 @@
                     vanGroup.position.y = -scaledBox.min.y;
                     vanGroup.position.z = -scaledCenter.z;
 
+                    rimMeshes = [];
+                    tyreMeshes = [];
+                    bulkheadMeshes = [];
+
                     vanGroup.traverse((child) => {
                         if (child.isMesh) {
                             child.geometry.computeVertexNormals();
                             const name = child.name.toLowerCase();
-                            
+
+                            // Bulkhead Indexing
+                            if (name.includes('bulkhead') || name.includes('partition') || name.includes('divider') || name.includes('wall_front') || name.includes('cab_wall') || name.includes('interior_wall') || name.includes('sep_')) {
+                                bulkheadMeshes.push(child);
+                            }
+
+                            // Material & Mesh Assignment
                             if (name.includes('glass') || name.includes('windscreen') || name.includes('window')) {
                                 child.material = glassMaterial;
                             } else if (name.includes('seat') || name.includes('chair') || name.includes('cushion')) {
                                 child.material = seatMaterial;
                             } else if (name.includes('tire') || name.includes('tyre') || name.includes('rubber')) {
-                                child.material = tyreMaterial;
+                                child.material = tyreMaterial.clone();
+                                tyreMeshes.push(child);
                             } else if (name.includes('rim') || name.includes('wheel') || name.includes('alloy') || name.includes('hub')) {
-                                child.material = rimMaterial;
+                                child.material = rimMaterial.clone();
+                                rimMeshes.push(child);
                             } else if (name.includes('dashboard') || name.includes('steering')) {
                                 child.material = dashboardMaterial;
                             } else {
@@ -359,7 +410,7 @@
                     });
 
                     scene.add(vanGroup);
-                    statusText.innerText = "Loaded Transit Custom - v5.7 Active!";
+                    statusText.innerText = "Loaded Transit Custom - v5.8 Active!";
                 }
 
                 gltfLoader.load(
