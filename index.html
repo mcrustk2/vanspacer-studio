@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en"> 
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Van Spacer Studio - Live 3D Builder </title>
+    <title>Van Spacer Studio - Live 3D Builder</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
@@ -34,7 +34,9 @@
             width: 100%; padding: 8px 12px; background: #0f172a; border: 1px solid #334155;
             color: #f8fafc; border-radius: 6px; font-size: 0.85rem; cursor: pointer; transition: all 0.2s ease;
         }
+        select:hover, button:hover { background: #1e293b; border-color: #38bdf8; }
         button.primary { background: #0284c7; border-color: #38bdf8; font-weight: 600; color: #fff; }
+        button.active { background: #059669; border-color: #10b981; }
 
         .library-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
         .item-card {
@@ -62,7 +64,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v5.2 Paint Studio</span>
+            <span class="version-tag">v5.3 Custom Wheels</span>
         </div>
 
         <div class="accordion-item">
@@ -85,11 +87,22 @@
                     </select>
                 </div>
                 <div>
+                    <label for="rim-color">Wheel Rim Colour</label>
+                    <select id="rim-color" onchange="changeRimColor(this.value)">
+                        <option value="0x9ca3af" selected>Silver Alloy</option>
+                        <option value="0x111827">Gloss / Satin Black</option>
+                        <option value="0x4b5563">Steel Grey</option>
+                    </select>
+                </div>
+                <div>
                     <label>Roof Cut Height</label>
                     <input type="range" id="clip-slider" min="0.2" max="2.2" step="0.05" value="1.45" oninput="updateCutaway(this.value)">
                 </div>
                 <div>
                     <button id="cutaway-toggle" class="primary" onclick="toggleCutawayPlane()">Toggle Roof Cutaway</button>
+                </div>
+                <div>
+                    <button id="bulkhead-toggle" onclick="toggleBulkhead()">Bulkhead: Included</button>
                 </div>
             </div>
         </div>
@@ -116,7 +129,9 @@
     </div>
 
     <script>
-        let renderer, clipPlane, bodyMaterial, clippingEnabled = true;
+        let renderer, clipPlane, vanGroup;
+        let bodyMaterial, rimMaterial, tyreMaterial;
+        let clippingEnabled = true, bulkheadVisible = true;
 
         function toggleAccordion(header) { header.parentElement.classList.toggle('collapsed'); }
 
@@ -135,6 +150,32 @@
                 bodyMaterial.color.setHex(parseInt(hexStr, 16));
                 document.getElementById('status-text').innerText = "Updated Van Paint Colour!";
             }
+        }
+
+        function changeRimColor(hexStr) {
+            if (rimMaterial) {
+                rimMaterial.color.setHex(parseInt(hexStr, 16));
+                document.getElementById('status-text').innerText = "Updated Wheel Rim Colour!";
+            }
+        }
+
+        function toggleBulkhead() {
+            if (!vanGroup) return;
+            bulkheadVisible = !bulkheadVisible;
+            
+            vanGroup.traverse((child) => {
+                if (child.isMesh) {
+                    const name = child.name.toLowerCase();
+                    if (name.includes('bulkhead') || name.includes('partition') || name.includes('divider') || name.includes('wall_front')) {
+                        child.visible = bulkheadVisible;
+                    }
+                }
+            });
+
+            const btn = document.getElementById('bulkhead-toggle');
+            btn.innerText = bulkheadVisible ? "Bulkhead: Included" : "Bulkhead: Removed";
+            btn.classList.toggle('active', !bulkheadVisible);
+            document.getElementById('status-text').innerText = bulkheadVisible ? "Bulkhead Installed" : "Bulkhead Removed for Walk-Through";
         }
 
         function addFurniture(type) {
@@ -164,11 +205,11 @@
 
             clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1.45);
 
-            // Balanced Studio Lighting: Dialed down to prevent white-outs
-            const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+            // Balanced Studio Lighting
+            const ambient = new THREE.AmbientLight(0xffffff, 0.75);
             scene.add(ambient);
 
-            const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
+            const sunLight = new THREE.DirectionalLight(0xffffff, 1.3);
             sunLight.position.set(10, 18, 10);
             scene.add(sunLight);
 
@@ -187,25 +228,41 @@
             dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/libs/draco/');
             gltfLoader.setDRACOLoader(dracoLoader);
 
-            // High-Definition PBR Paint Material
+            // Materials
             bodyMaterial = new THREE.MeshStandardMaterial({
-                color: 0x4b5563,        // Steel Grey default for crisp contrast
-                roughness: 0.45,        // Soft satin reflection
-                metalness: 0.35,        // Metallic panel depth
+                color: 0x4b5563,        // Steel Grey default
+                roughness: 0.45,
+                metalness: 0.35,
                 side: THREE.DoubleSide,
                 clippingPlanes: [clipPlane]
             });
 
-            const trimMaterial = new THREE.MeshStandardMaterial({
-                color: 0x1e293b,        // Dark slate trim/tires/dashboard
-                roughness: 0.85,
+            tyreMaterial = new THREE.MeshStandardMaterial({
+                color: 0x111827,        // Dark Rubber Black
+                roughness: 0.9,
+                metalness: 0.05,
+                side: THREE.DoubleSide,
+                clippingPlanes: [clipPlane]
+            });
+
+            rimMaterial = new THREE.MeshStandardMaterial({
+                color: 0x9ca3af,        // Silver Alloy default
+                roughness: 0.3,
+                metalness: 0.7,         // Metallic sheen for rims
+                side: THREE.DoubleSide,
+                clippingPlanes: [clipPlane]
+            });
+
+            const interiorTrimMaterial = new THREE.MeshStandardMaterial({
+                color: 0x1f2937,        // Dark slate dashboard/seats
+                roughness: 0.8,
                 metalness: 0.1,
                 side: THREE.DoubleSide,
                 clippingPlanes: [clipPlane]
             });
 
             function processAndAddGLB(gltf) {
-                const vanGroup = gltf.scene;
+                vanGroup = gltf.scene;
 
                 vanGroup.rotation.x = -Math.PI / 2;
 
@@ -224,8 +281,14 @@
                     if (child.isMesh) {
                         child.geometry.computeVertexNormals();
                         const name = child.name.toLowerCase();
-                        if (name.includes('wheel') || name.includes('tire') || name.includes('dashboard')) {
-                            child.material = trimMaterial;
+                        
+                        // Wheel Separation
+                        if (name.includes('tire') || name.includes('tyre') || name.includes('rubber')) {
+                            child.material = tyreMaterial;
+                        } else if (name.includes('rim') || name.includes('wheel') || name.includes('alloy') || name.includes('hub')) {
+                            child.material = rimMaterial;
+                        } else if (name.includes('dashboard') || name.includes('seat') || name.includes('steering')) {
+                            child.material = interiorTrimMaterial;
                         } else {
                             child.material = bodyMaterial;
                         }
@@ -233,7 +296,7 @@
                 });
 
                 scene.add(vanGroup);
-                statusText.innerText = "Loaded Transit Custom - v5.2 Active!";
+                statusText.innerText = "Loaded Transit Custom - v5.3 Active!";
             }
 
             gltfLoader.load(
