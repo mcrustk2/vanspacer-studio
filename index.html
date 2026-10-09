@@ -69,7 +69,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v5.4 Complete Studio</span>
+            <span class="version-tag">v5.5 Cab Glass & Interior</span>
         </div>
 
         <div class="accordion-item">
@@ -149,7 +149,7 @@
 
     <script>
         let renderer, camera, controls, clipPlane, vanGroup;
-        let bodyMaterial, rimMaterial, tyreMaterial;
+        let bodyMaterial, rimMaterial, tyreMaterial, glassMaterial, seatMaterial;
         let clippingEnabled = true, bulkheadVisible = true;
 
         function toggleAccordion(header) { header.parentElement.classList.toggle('collapsed'); }
@@ -239,15 +239,15 @@
 
             clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1.45);
 
-            // Balanced Studio Lighting
-            const ambient = new THREE.AmbientLight(0xffffff, 0.75);
+            // Studio Lighting
+            const ambient = new THREE.AmbientLight(0xffffff, 0.8);
             scene.add(ambient);
 
-            const sunLight = new THREE.DirectionalLight(0xffffff, 1.3);
+            const sunLight = new THREE.DirectionalLight(0xffffff, 1.4);
             sunLight.position.set(10, 18, 10);
             scene.add(sunLight);
 
-            const fillLight = new THREE.DirectionalLight(0xffffff, 0.6);
+            const fillLight = new THREE.DirectionalLight(0xffffff, 0.7);
             fillLight.position.set(-10, 12, -10);
             scene.add(fillLight);
 
@@ -262,7 +262,7 @@
             dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/libs/draco/');
             gltfLoader.setDRACOLoader(dracoLoader);
 
-            // Materials
+            // Body Material
             bodyMaterial = new THREE.MeshStandardMaterial({
                 color: 0x4b5563,        // Steel Grey default
                 roughness: 0.45,
@@ -271,26 +271,48 @@
                 clippingPlanes: [clipPlane]
             });
 
+            // Tyre Rubber
             tyreMaterial = new THREE.MeshStandardMaterial({
-                color: 0x111827,        // Dark Rubber Black
+                color: 0x111827,
                 roughness: 0.9,
                 metalness: 0.05,
                 side: THREE.DoubleSide,
                 clippingPlanes: [clipPlane]
             });
 
+            // Alloy Rims
             rimMaterial = new THREE.MeshStandardMaterial({
-                color: 0x9ca3af,        // Silver Alloy default
+                color: 0x9ca3af,
                 roughness: 0.3,
                 metalness: 0.7,
                 side: THREE.DoubleSide,
                 clippingPlanes: [clipPlane]
             });
 
-            const interiorTrimMaterial = new THREE.MeshStandardMaterial({
-                color: 0x1f2937,
-                roughness: 0.8,
+            // Transparent Window Glass
+            glassMaterial = new THREE.MeshStandardMaterial({
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.35,
+                roughness: 0.1,
+                metalness: 0.9,
+                side: THREE.DoubleSide,
+                clippingPlanes: [clipPlane]
+            });
+
+            // Seat Upholstery Leather
+            seatMaterial = new THREE.MeshStandardMaterial({
+                color: 0x374151,        // Charcoal Leather
+                roughness: 0.7,
                 metalness: 0.1,
+                side: THREE.DoubleSide,
+                clippingPlanes: [clipPlane]
+            });
+
+            const dashboardMaterial = new THREE.MeshStandardMaterial({
+                color: 0x1f2937,
+                roughness: 0.85,
+                metalness: 0.05,
                 side: THREE.DoubleSide,
                 clippingPlanes: [clipPlane]
             });
@@ -301,59 +323,4 @@
                 vanGroup.rotation.x = -Math.PI / 2;
 
                 const box = new THREE.Box3().setFromObject(vanGroup);
-                const size = box.getSize(new THREE.Vector3());
-                const scaleFactor = 4.97 / Math.max(size.x, size.y, size.z);
-                vanGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
-
-                const scaledBox = new THREE.Box3().setFromObject(vanGroup);
-                const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
-                vanGroup.position.x = -scaledCenter.x;
-                vanGroup.position.y = -scaledBox.min.y;
-                vanGroup.position.z = -scaledCenter.z;
-
-                vanGroup.traverse((child) => {
-                    if (child.isMesh) {
-                        child.geometry.computeVertexNormals();
-                        const name = child.name.toLowerCase();
-                        
-                        if (name.includes('tire') || name.includes('tyre') || name.includes('rubber')) {
-                            child.material = tyreMaterial;
-                        } else if (name.includes('rim') || name.includes('wheel') || name.includes('alloy') || name.includes('hub')) {
-                            child.material = rimMaterial;
-                        } else if (name.includes('dashboard') || name.includes('seat') || name.includes('steering')) {
-                            child.material = interiorTrimMaterial;
-                        } else {
-                            child.material = bodyMaterial;
-                        }
-                    }
-                });
-
-                scene.add(vanGroup);
-                statusText.innerText = "Loaded Transit Custom - v5.4 Complete Studio Active!";
-            }
-
-            gltfLoader.load(
-                'assets/models/ford-transit-custom-optimized.glb',
-                (gltf) => processAndAddGLB(gltf),
-                undefined,
-                () => {
-                    gltfLoader.load('assets/models/ford-transit-custom-optimised.glb', (gltf) => processAndAddGLB(gltf));
-                }
-            );
-
-            window.addEventListener('resize', () => {
-                camera.aspect = window.innerWidth / window.innerHeight;
-                camera.updateProjectionMatrix();
-                renderer.setSize(window.innerWidth, window.innerHeight);
-            });
-
-            function animate() {
-                requestAnimationFrame(animate);
-                controls.update();
-                renderer.render(scene, camera);
-            }
-            animate();
-        });
-    </script>
-</body>
-</html>
+                const size = box
