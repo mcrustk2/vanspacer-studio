@@ -6,7 +6,7 @@
     <title>Van Spacer Studio - Live 3D Builder</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; }
+        body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
         #canvas-container { width: 100vw; height: 100vh; display: block; position: absolute; top:0; left:0; z-index: 1; }
         
         #ui-sidebar {
@@ -29,6 +29,8 @@
         }
         .accordion-header:hover { background: #273549; }
         .accordion-header::after { content: '▲'; font-size: 0.65rem; transition: transform 0.2s; }
+        .accordion-item.collapsed .accordion-header::after { transform: rotate(180deg); }
+        .accordion-content { padding: 12px; display: flex; flex-direction: column; gap: 10px; border-top: 1px solid #334155; }
         .accordion-item.collapsed .accordion-content { display: none; }
 
         label { display: block; font-size: 0.8rem; color: #94a3b8; margin-bottom: 4px; font-weight: 500; }
@@ -37,12 +39,16 @@
             color: #f8fafc; border-radius: 6px; font-size: 0.85rem; cursor: pointer; transition: all 0.2s ease;
         }
         select:hover, button:hover { background: #1e293b; border-color: #38bdf8; }
+        button.primary { background: #0284c7; border-color: #38bdf8; font-weight: 600; color: #fff; }
+        button.active { background: #059669; border-color: #10b981; }
 
         .library-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
         .item-card {
             background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 10px;
-            text-align: center; cursor: pointer; font-size: 0.78rem;
+            text-align: center; cursor: pointer; font-size: 0.78rem; transition: all 0.2s ease;
         }
+        .item-card:hover { border-color: #38bdf8; background: #1e293b; }
+        .item-card strong { display: block; color: #f8fafc; margin-bottom: 2px; }
 
         #info-banner {
             position: absolute; bottom: 20px; left: 20px; background: rgba(15, 23, 42, 0.9);
@@ -63,17 +69,51 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v4.4 Override</span>
+            <span class="version-tag">v4.5 Studio Cutaway</span>
         </div>
 
         <div class="accordion-item">
-            <div class="accordion-header">1. Chassis & Views</div>
+            <div class="accordion-header" onclick="toggleAccordion(this)">1. Chassis & Views</div>
             <div class="accordion-content">
                 <div>
                     <label for="wheelbase">Vehicle Model</label>
                     <select id="wheelbase">
                         <option value="L1">Ford Transit Custom L1 (SWB)</option>
+                        <option value="L2">Ford Transit Custom L2 (LWB)</option>
                     </select>
+                </div>
+                <div>
+                    <label>View Mode</label>
+                    <button id="view-3d" class="active" onclick="setViewMode('3d')">3D Orbit Mode</button>
+                    <button id="view-top" style="margin-top:4px;" onclick="setViewMode('top')">2D Top Floorplan</button>
+                </div>
+                <div>
+                    <label>Shell View</label>
+                    <button id="cutaway-toggle" class="primary" onclick="toggleCutaway()">Toggle Side Cutaway Mode</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="accordion-item">
+            <div class="accordion-header" onclick="toggleAccordion(this)">2. Asset Library</div>
+            <div class="accordion-content">
+                <div class="library-grid">
+                    <div class="item-card" onclick="addFurniture('bed')">
+                        <strong>Fixed Platform Bed</strong>
+                        <span style="color:#64748b;">1.8m x 1.4m</span>
+                    </div>
+                    <div class="item-card" onclick="addFurniture('kitchen')">
+                        <strong>Kitchenette Unit</strong>
+                        <span style="color:#64748b;">1.2m x 0.5m</span>
+                    </div>
+                    <div class="item-card" onclick="addFurniture('sofa')">
+                        <strong>Bench / Sofa Bed</strong>
+                        <span style="color:#64748b;">1.5m x 0.6m</span>
+                    </div>
+                    <div class="item-card" onclick="addFurniture('tall_cupboard')">
+                        <strong>Tall Cupboard</strong>
+                        <span style="color:#64748b;">0.6m x 0.5m</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -84,88 +124,147 @@
     </div>
 
     <script>
+        let cutawayActive = true;
+        let vanModelGroup = null;
+
+        function toggleAccordion(header) { 
+            header.parentElement.classList.toggle('collapsed'); 
+        }
+
+        function toggleCutaway() {
+            if (!vanModelGroup) return;
+            cutawayActive = !cutawayActive;
+            
+            vanModelGroup.traverse((child) => {
+                if (child.isMesh) {
+                    const name = child.name.toLowerCase();
+                    if (name.includes('roof') || name.includes('ceiling') || name.includes('wall_left') || name.includes('glass_left') || name.includes('door_left')) {
+                        child.visible = !cutawayActive;
+                    }
+                }
+            });
+            document.getElementById('status-text').innerText = cutawayActive ? "Cutaway Mode Active" : "Full Body Shell Active";
+        }
+
+        function addFurniture(type) {
+            document.getElementById('status-text').innerText = `Added ${type} to cargo area`;
+        }
+
+        function setViewMode(mode) {
+            document.getElementById('view-3d').classList.toggle('active', mode === '3d');
+            document.getElementById('view-top').classList.toggle('active', mode === 'top');
+        }
+
         window.addEventListener('DOMContentLoaded', () => {
             const container = document.getElementById('canvas-container');
             const statusText = document.getElementById('status-text');
 
+            // 1. Scene & Render Setup
             const scene = new THREE.Scene();
-            scene.background = new THREE.Color(0xf1f5f9);
+            scene.background = new THREE.Color(0xe2e8f0);
 
-            const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
-            camera.position.set(6.5, 4.0, 7.5);
+            const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera.position.set(6.5, 4.2, 7.5);
 
             const renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
             renderer.toneMapping = THREE.ACESFilmicToneMapping;
-            renderer.toneMappingExposure = 1.2;
+            renderer.toneMappingExposure = 1.15;
             container.appendChild(renderer.domElement);
 
             const controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
+            controls.target.set(0, 0.8, 0);
 
-            // Multi-Directional Lighting Studio
-            const ambient = new THREE.AmbientLight(0xffffff, 1.8);
+            // Studio Lighting Setup
+            const ambient = new THREE.AmbientLight(0xffffff, 1.6);
             scene.add(ambient);
 
-            const mainLight = new THREE.DirectionalLight(0xffffff, 2.0);
-            mainLight.position.set(10, 20, 10);
-            scene.add(mainLight);
+            const mainSun = new THREE.DirectionalLight(0xffffff, 2.2);
+            mainSun.position.set(8, 15, 8);
+            mainSun.castShadow = true;
+            mainSun.shadow.mapSize.width = 2048;
+            mainSun.shadow.mapSize.height = 2048;
+            mainSun.shadow.bias = -0.0001;
+            scene.add(mainSun);
 
-            const fillLight = new THREE.DirectionalLight(0xffffff, 1.2);
-            fillLight.position.set(-10, 10, -10);
+            const fillLight = new THREE.DirectionalLight(0xffffff, 1.0);
+            fillLight.position.set(-8, 10, -8);
             scene.add(fillLight);
 
-            const grid = new THREE.GridHelper(12, 24, 0x0284c7, 0xc2c7d0);
+            // Floor Grid & Shadow Plane
+            const grid = new THREE.GridHelper(14, 28, 0x38bdf8, 0xc2c7d0);
+            grid.position.y = -0.01;
             scene.add(grid);
 
-            // Configure Loaders
+            const shadowPlane = new THREE.Mesh(
+                new THREE.PlaneGeometry(20, 20),
+                new THREE.ShadowMaterial({ opacity: 0.15 })
+            );
+            shadowPlane.rotation.x = -Math.PI / 2;
+            shadowPlane.receiveShadow = true;
+            scene.add(shadowPlane);
+
+            statusText.innerText = "Requesting GLB Model...";
+
+            // 2. Loaders & Studio Materials
             const gltfLoader = new THREE.GLTFLoader();
             const dracoLoader = new THREE.DRACOLoader();
             dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/libs/draco/');
             gltfLoader.setDRACOLoader(dracoLoader);
 
-            // Reusable Clean Materials
             const bodyMaterial = new THREE.MeshStandardMaterial({
-                color: 0xc0caf5,        // Crisp silver-blue metallic body
-                roughness: 0.3,
-                metalness: 0.5,
+                color: 0xe2e8f0,        // Solid studio silver body
+                roughness: 0.25,
+                metalness: 0.45,
                 side: THREE.DoubleSide,
-                transparent: false     // Enforce 100% solid opacity
+                transparent: false
             });
 
             const trimMaterial = new THREE.MeshStandardMaterial({
-                color: 0x1e293b,        // Dark slate trim for tires/grille
-                roughness: 0.8,
+                color: 0x334155,        // Slate gray tires/trim/dashboard
+                roughness: 0.75,
                 metalness: 0.1,
                 side: THREE.DoubleSide
             });
 
             function processAndAddGLB(gltf) {
-                const obj = gltf.scene;
+                vanModelGroup = gltf.scene;
 
-                // Auto-Orientation
-                obj.rotation.x = -Math.PI / 2;
+                // Orientation
+                vanModelGroup.rotation.x = -Math.PI / 2;
 
                 // Scale Normalization to Ford Transit SWB Length (4.97m)
-                const box = new THREE.Box3().setFromObject(obj);
+                const box = new THREE.Box3().setFromObject(vanModelGroup);
                 const size = box.getSize(new THREE.Vector3());
                 const scaleFactor = 4.97 / Math.max(size.x, size.y, size.z);
-                obj.scale.set(scaleFactor, scaleFactor, scaleFactor);
+                vanModelGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
 
-                // Grid Placement
-                const scaledBox = new THREE.Box3().setFromObject(obj);
+                // Grid Alignment
+                const scaledBox = new THREE.Box3().setFromObject(vanModelGroup);
                 const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
-                obj.position.x = -scaledCenter.x;
-                obj.position.y = -scaledBox.min.y;
-                obj.position.z = -scaledCenter.z;
+                vanModelGroup.position.x = -scaledCenter.x;
+                vanModelGroup.position.y = -scaledBox.min.y;
+                vanModelGroup.position.z = -scaledCenter.z;
 
-                // FORCE OVERRIDE ALL MESH MATERIALS
-                obj.traverse((child) => {
+                // Material & Cutaway Processing
+                vanModelGroup.traverse((child) => {
                     if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
                         child.geometry.computeVertexNormals();
-                        const meshName = child.name.toLowerCase();
+                        
+                        const name = child.name.toLowerCase();
 
-                        if (meshName.includes('wheel') || meshName.includes('tire') || meshName.includes('grille') || meshName.includes('bumper')) {
+                        // Cutaway Hiding Logic
+                        if (cutawayActive && (name.includes('roof') || name.includes('ceiling') || name.includes('wall_left') || name.includes('glass_left') || name.includes('door_left'))) {
+                            child.visible = false;
+                        }
+
+                        // Apply Studio Materials
+                        if (name.includes('wheel') || name.includes('tire') || name.includes('dashboard') || name.includes('seat')) {
                             child.material = trimMaterial;
                         } else {
                             child.material = bodyMaterial;
@@ -173,9 +272,9 @@
                     }
                 });
 
-                scene.add(obj);
-                controls.target.set(0, 1.0, 0);
-                statusText.innerText = "Loaded Ford Transit Custom GLB Model";
+                scene.add(vanModelGroup);
+                controls.target.set(0, 0.8, 0);
+                statusText.innerText = "Loaded Ford Transit Custom GLB Studio Cutaway Model!";
             }
 
             // Path Fallback Chain
@@ -214,6 +313,7 @@
                 renderer.setSize(window.innerWidth, window.innerHeight);
             });
 
+            // 3. Render Loop
             function animate() {
                 requestAnimationFrame(animate);
                 controls.update();
