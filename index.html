@@ -28,6 +28,10 @@
             align-items: center; text-transform: uppercase; letter-spacing: 0.5px; user-select: none;
         }
         .accordion-header:hover { background: #273549; }
+        .accordion-header::after { content: '▲'; font-size: 0.65rem; transition: transform 0.2s; }
+        .accordion-item.collapsed .accordion-header::after { transform: rotate(180deg); }
+        .accordion-content { padding: 12px; display: flex; flex-direction: column; gap: 10px; border-top: 1px solid #334155; }
+        .accordion-item.collapsed .accordion-content { display: none; }
 
         label { display: block; font-size: 0.8rem; color: #94a3b8; margin-bottom: 4px; font-weight: 500; }
         select, button, input[type=range] {
@@ -41,9 +45,10 @@
         .library-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
         .item-card {
             background: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 10px;
-            text-align: center; cursor: pointer; font-size: 0.78rem;
+            text-align: center; cursor: pointer; font-size: 0.78rem; transition: all 0.2s ease;
         }
         .item-card:hover { border-color: #38bdf8; background: #1e293b; }
+        .item-card strong { display: block; color: #f8fafc; margin-bottom: 2px; }
 
         #info-banner {
             position: absolute; bottom: 20px; left: 20px; background: rgba(15, 23, 42, 0.9);
@@ -64,7 +69,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v5.3 Custom Wheels</span>
+            <span class="version-tag">v5.4 Complete Studio</span>
         </div>
 
         <div class="accordion-item">
@@ -74,7 +79,13 @@
                     <label for="wheelbase">Vehicle Model</label>
                     <select id="wheelbase">
                         <option value="L1">Ford Transit Custom L1 (SWB)</option>
+                        <option value="L2">Ford Transit Custom L2 (LWB)</option>
                     </select>
+                </div>
+                <div>
+                    <label>View Mode</label>
+                    <button id="view-3d" class="active" onclick="setViewMode('3d')">3D Orbit Mode</button>
+                    <button id="view-top" style="margin-top:4px;" onclick="setViewMode('top')">2D Top Floorplan</button>
                 </div>
                 <div>
                     <label for="paint-color">Van Paint Colour</label>
@@ -111,13 +122,21 @@
             <div class="accordion-header" onclick="toggleAccordion(this)">2. Asset Library</div>
             <div class="accordion-content">
                 <div class="library-grid">
-                    <div class="item-card" onclick="addFurniture('bed')">
+                    <div class="item-card" onclick="addFurniture('Fixed Platform Bed')">
                         <strong>Fixed Platform Bed</strong>
                         <span style="color:#64748b;">1.8m x 1.4m</span>
                     </div>
-                    <div class="item-card" onclick="addFurniture('kitchen')">
+                    <div class="item-card" onclick="addFurniture('Kitchenette Unit')">
                         <strong>Kitchenette Unit</strong>
                         <span style="color:#64748b;">1.2m x 0.5m</span>
+                    </div>
+                    <div class="item-card" onclick="addFurniture('Bench / Sofa Bed')">
+                        <strong>Bench / Sofa Bed</strong>
+                        <span style="color:#64748b;">1.5m x 0.6m</span>
+                    </div>
+                    <div class="item-card" onclick="addFurniture('Tall Cabinet')">
+                        <strong>Tall Cabinet</strong>
+                        <span style="color:#64748b;">0.6m x 0.5m</span>
                     </div>
                 </div>
             </div>
@@ -129,7 +148,7 @@
     </div>
 
     <script>
-        let renderer, clipPlane, vanGroup;
+        let renderer, camera, controls, clipPlane, vanGroup;
         let bodyMaterial, rimMaterial, tyreMaterial;
         let clippingEnabled = true, bulkheadVisible = true;
 
@@ -178,8 +197,23 @@
             document.getElementById('status-text').innerText = bulkheadVisible ? "Bulkhead Installed" : "Bulkhead Removed for Walk-Through";
         }
 
-        function addFurniture(type) {
-            document.getElementById('status-text').innerText = `Added ${type} to layout`;
+        function setViewMode(mode) {
+            document.getElementById('view-3d').classList.toggle('active', mode === '3d');
+            document.getElementById('view-top').classList.toggle('active', mode === 'top');
+
+            if (mode === 'top') {
+                camera.position.set(0, 10, 0);
+                controls.target.set(0, 0, 0);
+            } else {
+                camera.position.set(6.5, 4.2, 7.5);
+                controls.target.set(0, 0.8, 0);
+            }
+            controls.update();
+            document.getElementById('status-text').innerText = mode === 'top' ? "2D Top Floorplan Active" : "3D Orbit Active";
+        }
+
+        function addFurniture(name) {
+            document.getElementById('status-text').innerText = `Selected ${name}`;
         }
 
         window.addEventListener('DOMContentLoaded', () => {
@@ -189,7 +223,7 @@
             const scene = new THREE.Scene();
             scene.background = new THREE.Color(0xe2e8f0);
 
-            const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
+            camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
             camera.position.set(6.5, 4.2, 7.5);
 
             renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -199,7 +233,7 @@
             renderer.localClippingEnabled = true;
             container.appendChild(renderer.domElement);
 
-            const controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
             controls.target.set(0, 0.8, 0);
 
@@ -248,13 +282,13 @@
             rimMaterial = new THREE.MeshStandardMaterial({
                 color: 0x9ca3af,        // Silver Alloy default
                 roughness: 0.3,
-                metalness: 0.7,         // Metallic sheen for rims
+                metalness: 0.7,
                 side: THREE.DoubleSide,
                 clippingPlanes: [clipPlane]
             });
 
             const interiorTrimMaterial = new THREE.MeshStandardMaterial({
-                color: 0x1f2937,        // Dark slate dashboard/seats
+                color: 0x1f2937,
                 roughness: 0.8,
                 metalness: 0.1,
                 side: THREE.DoubleSide,
@@ -282,7 +316,6 @@
                         child.geometry.computeVertexNormals();
                         const name = child.name.toLowerCase();
                         
-                        // Wheel Separation
                         if (name.includes('tire') || name.includes('tyre') || name.includes('rubber')) {
                             child.material = tyreMaterial;
                         } else if (name.includes('rim') || name.includes('wheel') || name.includes('alloy') || name.includes('hub')) {
@@ -296,7 +329,7 @@
                 });
 
                 scene.add(vanGroup);
-                statusText.innerText = "Loaded Transit Custom - v5.3 Active!";
+                statusText.innerText = "Loaded Transit Custom - v5.4 Complete Studio Active!";
             }
 
             gltfLoader.load(
