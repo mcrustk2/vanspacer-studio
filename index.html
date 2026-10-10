@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v7.5 World Anchor] Van Spacer Studio</title>
+    <title>[v7.6 Vertex Snap] Van Spacer Studio</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
@@ -132,13 +132,13 @@
                 linewidth: 4,
                 depthTest: false,
                 transparent: true,
-                opacity: isTracking ? 0.75 : 1.0
+                opacity: isTracking ? 0.8 : 1.0
             });
             const line = new THREE.Line(lineGeom, lineMat);
             line.renderOrder = 9999;
             group.add(line);
 
-            const sphereGeom = new THREE.SphereGeometry(0.02, 16, 16);
+            const sphereGeom = new THREE.SphereGeometry(0.025, 16, 16);
             const sphereMat = new THREE.MeshBasicMaterial({
                 color: 0xef4444,
                 depthTest: false,
@@ -157,6 +157,56 @@
             group.add(s2);
 
             return group;
+        }
+
+        // Snap to Nearest Vertex Engine (Converts local vertex to absolute Scene World Space)
+        function getSnappedSurfaceHit(event) {
+            if (!vanGroup || !camera) return null;
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(vanGroup.children, true);
+
+            if (intersects.length > 0) {
+                const hit = intersects[0];
+                const mesh = hit.object;
+                const geometry = mesh.geometry;
+
+                if (geometry && geometry.attributes && geometry.attributes.position) {
+                    const posAttr = geometry.attributes.position;
+                    const localHit = hit.point.clone();
+                    mesh.worldToLocal(localHit); // Convert world hit point into mesh local space for vertex lookup
+
+                    let closestVertex = new THREE.Vector3();
+                    let minDistance = Infinity;
+
+                    // Evaluate faces near intersection point
+                    const face = hit.face;
+                    const vertexIndices = [face.a, face.b, face.c];
+
+                    vertexIndices.forEach(idx => {
+                        const v = new THREE.Vector3(
+                            posAttr.getX(idx),
+                            posAttr.getY(idx),
+                            posAttr.getZ(idx)
+                        );
+                        const dist = v.distanceTo(localHit);
+                        if (dist < minDistance) {
+                            minDistance = dist;
+                            closestVertex.copy(v);
+                        }
+                    });
+
+                    // Transform closest vertex directly into Scene World Space
+                    return closestVertex.applyMatrix4(mesh.matrixWorld);
+                }
+
+                // Fallback to direct world hit point
+                return hit.point.clone();
+            }
+            return null;
         }
 
         window.toggleMeasureTool = function() {
@@ -308,7 +358,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v7.5 World Anchor</span>
+            <span class="version-tag">v7.6 Vertex Snap Engine</span>
         </div>
 
         <!-- ACCORDION 1: CHASSIS & VIEWS -->
@@ -415,34 +465,17 @@
     </div>
 
     <script>
-        // Direct Raycast Surface Hit (No Normal Filtering Rejection)
-        function getSurfaceHit(event) {
-            if (!vanGroup || !camera) return null;
-
-            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
-            raycaster.setFromCamera(mouse, camera);
-            const intersects = raycaster.intersectObjects(vanGroup.children, true);
-
-            if (intersects.length > 0) {
-                // Instantly returns 3D World Position vector
-                return intersects[0].point.clone();
-            }
-            return null;
-        }
-
         // Live Tracking Listener
         window.addEventListener('mousemove', (event) => {
             if (!measureMode || !firstPoint) return;
 
-            const currentHover = getSurfaceHit(event);
+            const currentHover = getSnappedSurfaceHit(event);
             if (currentHover) {
                 if (liveTrackingGroup) scene.remove(liveTrackingGroup);
                 liveTrackingGroup = create3DLaserSegment(firstPoint, currentHover, true);
                 scene.add(liveTrackingGroup);
 
-                // Exact physical distance in centimeters (1 World Unit = 100 cm)
+                // Exact metric distance in centimeters (1 World Unit = 100 cm)
                 const distCm = (firstPoint.distanceTo(currentHover) * 100).toFixed(2);
                 document.getElementById('status-text').innerText = `Laser Tracking: ${distCm} cm (Click to Lock)`;
             }
@@ -454,7 +487,7 @@
             if (!camera || !scene) return;
 
             if (measureMode) {
-                const hitPoint = getSurfaceHit(event);
+                const hitPoint = getSnappedSurfaceHit(event);
                 if (hitPoint) {
                     if (!firstPoint) {
                         firstPoint = hitPoint;
@@ -581,57 +614,4 @@
                     const scaledBox = new THREE.Box3().setFromObject(vanGroup);
                     const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
                     vanGroup.position.x = -scaledCenter.x;
-                    vanGroup.position.y = -scaledBox.min.y;
-                    vanGroup.position.z = -scaledCenter.z;
-
-                    vanGroup.updateMatrixWorld(true);
-
-                    rimMeshes = []; tyreMeshes = []; bulkheadMeshes = [];
-
-                    vanGroup.traverse((child) => {
-                        if (child.isMesh) {
-                            child.geometry.computeVertexNormals();
-                            const name = child.name.toLowerCase();
-
-                            if (name.includes('bulkhead')) bulkheadMeshes.push(child);
-                            if (name.includes('rims') || name.includes('rim')) { child.material = rimMaterial; rimMeshes.push(child); }
-                            else if (name.includes('tyres') || name.includes('tyre') || name.includes('tire')) { child.material = tyreMaterial; tyreMeshes.push(child); }
-                            else if (name.includes('glass') || name.includes('window') || name.includes('windscreen')) child.material = glassMaterial;
-                            else if (name.includes('seat')) child.material = seatMaterial;
-                            else child.material = bodyMaterial;
-                        }
-                    });
-
-                    scene.add(vanGroup);
-                    statusText.innerText = "Loaded Transit Custom - v7.5 World Anchor Active!";
-                }
-
-                gltfLoader.load(
-                    'assets/models/ford-transit-custom-optimized.glb',
-                    (gltf) => processAndAddGLB(gltf),
-                    undefined,
-                    () => {
-                        gltfLoader.load('assets/models/ford-transit-custom-optimised.glb', (gltf) => processAndAddGLB(gltf));
-                    }
-                );
-
-                window.addEventListener('resize', () => {
-                    camera.aspect = window.innerWidth / window.innerHeight;
-                    camera.updateProjectionMatrix();
-                    renderer.setSize(window.innerWidth, window.innerHeight);
-                });
-
-                function animate() {
-                    requestAnimationFrame(animate);
-                    if (controls) controls.update();
-                    if (renderer && scene && camera) renderer.render(scene, camera);
-                }
-                animate();
-
-            } catch (err) {
-                console.error(err);
-            }
-        });
-    </script>
-</body>
-</html>
+                    vanGroup.position.y = -scaledBox.min.y
