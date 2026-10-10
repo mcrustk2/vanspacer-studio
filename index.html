@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v6.1] Van Spacer Studio - Live 3D Builder</title>
+    <title>[v6.2] Van Spacer Studio - Live 3D Builder</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
@@ -53,6 +53,25 @@
         .gizmo-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px; }
         .gizmo-controls button { font-size: 0.75rem; padding: 6px; }
 
+        /* Vertical Height Bar Styling */
+        #height-slider-container {
+            position: absolute; left: 20px; top: 50%; transform: translateY(-50%);
+            height: 280px; width: 48px; background: rgba(15, 23, 42, 0.9);
+            backdrop-filter: blur(12px); border: 1px solid #334155; border-radius: 24px;
+            display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+            padding: 14px 0; z-index: 10; box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        }
+        .height-label { font-size: 0.65rem; font-weight: 700; color: #38bdf8; text-transform: uppercase; letter-spacing: 0.5px; }
+        .height-val { font-size: 0.72rem; font-weight: 700; color: #f8fafc; }
+        
+        .vertical-slider-wrapper {
+            height: 180px; display: flex; align-items: center; justify-content: center;
+        }
+        .vertical-slider-wrapper input[type=range] {
+            transform: rotate(-90deg); width: 160px; height: 6px;
+            accent-color: #38bdf8; cursor: pointer; outline: none;
+        }
+
         #info-banner {
             position: absolute; bottom: 20px; left: 20px; background: rgba(15, 23, 42, 0.9);
             padding: 12px 20px; border-radius: 8px; border: 1px solid #334155; font-size: 0.82rem; color: #94a3b8;
@@ -70,10 +89,19 @@
 <body>
     <div id="canvas-container"></div>
 
+    <!-- Vertical Relative Camera Height Control Bar -->
+    <div id="height-slider-container">
+        <span class="height-label">Height</span>
+        <div class="vertical-slider-wrapper">
+            <input type="range" id="cam-height-slider" min="0.2" max="8.0" step="0.1" value="4.2" oninput="updateCameraHeight(this.value)">
+        </div>
+        <span id="height-readout" class="height-val">4.2m</span>
+    </div>
+
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v6.1 Gizmo Engine</span>
+            <span class="version-tag">v6.2 Height Bar</span>
         </div>
 
         <div class="accordion-item">
@@ -185,6 +213,16 @@
             if (clipPlane) clipPlane.constant = parseFloat(val);
         }
 
+        function updateCameraHeight(val) {
+            const h = parseFloat(val);
+            if (camera && controls) {
+                camera.position.y = h;
+                controls.update();
+            }
+            const readout = document.getElementById('height-readout');
+            if (readout) readout.innerText = `${h.toFixed(1)}m`;
+        }
+
         function toggleCutawayPlane() {
             if (!renderer) return;
             clippingEnabled = !clippingEnabled;
@@ -198,7 +236,6 @@
             const btn = document.getElementById('measure-toggle');
             
             if (!measureMode) {
-                // Toggled off: Clear all persistent red laser lines
                 if (activeLaserGroup) {
                     scene.remove(activeLaserGroup);
                     activeLaserGroup = null;
@@ -274,9 +311,13 @@
                 if (mode === 'top') {
                     camera.position.set(0, 10, 0);
                     controls.target.set(0, 0, 0);
+                    document.getElementById('cam-height-slider').value = 10.0;
+                    document.getElementById('height-readout').innerText = "10.0m";
                 } else {
                     camera.position.set(6.5, 4.2, 7.5);
                     controls.target.set(0, 0.8, 0);
+                    document.getElementById('cam-height-slider').value = 4.2;
+                    document.getElementById('height-readout').innerText = "4.2m";
                 }
                 controls.update();
             }
@@ -306,7 +347,6 @@
             scene.add(item);
             furnitureObjects.push(item);
 
-            // Select new furniture item immediately
             selectedFurniture = item;
             transformControls.attach(item);
 
@@ -314,8 +354,7 @@
         }
 
         window.addEventListener('click', (event) => {
-            // Ignore UI sidebar clicks
-            if (event.clientX > window.innerWidth - 340) return;
+            if (event.clientX > window.innerWidth - 340 || event.clientX < 80) return;
             if (!camera || !scene) return;
 
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -323,7 +362,6 @@
 
             raycaster.setFromCamera(mouse, camera);
 
-            // Handle Laser Measuring Tool
             if (measureMode && vanGroup) {
                 const intersects = raycaster.intersectObjects(vanGroup.children, true);
                 if (intersects.length > 0) {
@@ -335,7 +373,6 @@
                         const mm = (dist * 1000).toFixed(0);
                         const meters = dist.toFixed(2);
 
-                        // Persistent Line
                         const lineGeom = new THREE.BufferGeometry().setFromPoints(measurePoints);
                         const lineMat = new THREE.LineBasicMaterial({ color: 0xef4444, linewidth: 5 });
                         const laserLine = new THREE.Line(lineGeom, lineMat);
@@ -351,7 +388,6 @@
                 return;
             }
 
-            // Handle Selecting Furniture Objects
             if (furnitureObjects.length > 0) {
                 const furnitureHits = raycaster.intersectObjects(furnitureObjects, true);
                 if (furnitureHits.length > 0) {
@@ -384,10 +420,19 @@
                 controls.enableDamping = true;
                 controls.target.set(0, 0.8, 0);
 
-                // Transform Controls for Moving / Scaling Furniture
+                // Update height slider readout dynamically during mouse orbit
+                controls.addEventListener('change', () => {
+                    const slider = document.getElementById('cam-height-slider');
+                    const readout = document.getElementById('height-readout');
+                    if (slider && camera) {
+                        slider.value = camera.position.y;
+                        if (readout) readout.innerText = `${camera.position.y.toFixed(1)}m`;
+                    }
+                });
+
                 transformControls = new THREE.TransformControls(camera, renderer.domElement);
                 transformControls.addEventListener('dragging-changed', (event) => {
-                    controls.enabled = !event.value; // Disable orbit control while dragging gizmo
+                    controls.enabled = !event.value;
                 });
                 scene.add(transformControls);
 
@@ -460,7 +505,7 @@
                     });
 
                     scene.add(vanGroup);
-                    statusText.innerText = "Loaded Transit Custom - v6.1 Active!";
+                    statusText.innerText = "Loaded Transit Custom - v6.2 Active!";
                 }
 
                 gltfLoader.load(
