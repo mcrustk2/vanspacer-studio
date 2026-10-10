@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v6.7] Van Spacer Studio - Live 3D Builder</title>
+    <title>[v6.8] Van Spacer Studio - Live 3D Builder</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
@@ -87,16 +87,20 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/DRACOLoader.js"></script>
 
     <script>
-        // Global variables and window scope assignments
+        // Global variables and scope bindings
         let renderer, camera, scene, controls, transformControls, clipPlane, vanGroup = null;
-        let bodyMaterial, rimMaterial, tyreMaterial, glassMaterial, seatMaterial;
+        let bodyMaterial, rimMaterial, tyreMaterial, glassMaterial, seatMaterial, laserMaterial;
         let rimMeshes = [], tyreMeshes = [], bulkheadMeshes = [];
         let furnitureObjects = [], selectedFurniture = null;
         let clippingEnabled = true, bulkheadVisible = true, measureMode = false;
         
-        // Laser measurement tracking state
+        // Exact Physical Calibration: Ford Transit Custom L1 SWB real length = 497.30 cm
+        const TRANSIT_REAL_LENGTH_CM = 497.30;
+        let WORLD_SCALE_RATIO = 100.0; // Calibrated dynamically upon loading model
+
+        // Laser tracking variables
         let firstPoint = null;
-        let dynamicLine = null;
+        let dynamicLaserCylinder = null;
         let activeLaserGroup = null;
 
         let raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
@@ -114,7 +118,7 @@
                 controls.update();
             }
             const readout = document.getElementById('height-readout');
-            if (readout) readout.innerText = `${(h * 100).toFixed(2)} cm`;
+            if (readout) readout.innerText = `${(h * WORLD_SCALE_RATIO).toFixed(2)} cm`;
         };
 
         window.toggleCutawayPlane = function() {
@@ -124,13 +128,37 @@
             document.getElementById('status-text').innerText = clippingEnabled ? "Roof Cutaway Active" : "Full Van Active";
         };
 
+        // Creates a 3D cylindrical laser beam visible over all geometry
+        function createLaserCylinder(p1, p2) {
+            const distance = p1.distanceTo(p2);
+            if (distance < 0.001) return null;
+
+            const geom = new THREE.CylinderGeometry(0.015, 0.015, distance, 8);
+            const mesh = new THREE.Mesh(geom, laserMaterial);
+
+            // Position and orient cylinder between p1 and p2
+            const midpoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
+            mesh.position.copy(midpoint);
+
+            const orientation = new THREE.Matrix4();
+            const dir = new THREE.Vector3().subVectors(p2, p1).normalize();
+            const up = new THREE.Vector3(0, 1, 0);
+            
+            orientation.lookAt(p1, p2, up);
+            mesh.quaternion.setFromRotationMatrix(orientation);
+            mesh.rotation.x += Math.PI / 2; // Align cylinder length along vectors
+            mesh.renderOrder = 999;
+
+            return mesh;
+        }
+
         window.toggleMeasureTool = function() {
             measureMode = !measureMode;
             firstPoint = null;
 
-            if (dynamicLine) {
-                scene.remove(dynamicLine);
-                dynamicLine = null;
+            if (dynamicLaserCylinder) {
+                scene.remove(dynamicLaserCylinder);
+                dynamicLaserCylinder = null;
             }
 
             const btn = document.getElementById('measure-toggle');
@@ -154,7 +182,7 @@
                     btn.innerText = "Laser Measure: ON (Click Start)";
                     btn.style.background = "#ef4444";
                 }
-                document.getElementById('status-text').innerText = "Click initial point on van to anchor laser line";
+                document.getElementById('status-text').innerText = "Click initial point on van to anchor laser beam";
             }
         };
 
@@ -212,12 +240,12 @@
                     camera.position.set(0, 10, 0);
                     controls.target.set(0, 0, 0);
                     document.getElementById('cam-height-slider').value = 10.0;
-                    document.getElementById('height-readout').innerText = "1000.00 cm";
+                    document.getElementById('height-readout').innerText = `${(10.0 * WORLD_SCALE_RATIO).toFixed(2)} cm`;
                 } else {
                     camera.position.set(6.5, 4.2, 7.5);
                     controls.target.set(0, 0.8, 0);
                     document.getElementById('cam-height-slider').value = 4.2;
-                    document.getElementById('height-readout').innerText = "420.00 cm";
+                    document.getElementById('height-readout').innerText = `${(4.2 * WORLD_SCALE_RATIO).toFixed(2)} cm`;
                 }
                 controls.update();
             }
@@ -273,7 +301,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v6.7 Live Laser (cm)</span>
+            <span class="version-tag">v6.8 Calibrated Laser</span>
         </div>
 
         <!-- ACCORDION 1: CHASSIS & VIEWS -->
@@ -380,7 +408,7 @@
     </div>
 
     <script>
-        // Real-time mouse movement listener for dynamic laser rubber-banding
+        // Real-time mouse movement listener for dynamic laser tracking
         window.addEventListener('mousemove', (event) => {
             if (!measureMode || !firstPoint || !vanGroup || !camera) return;
 
@@ -393,19 +421,11 @@
             if (intersects.length > 0) {
                 const currentHoverPoint = intersects[0].point;
 
-                // Create or update dynamic line
-                const points = [firstPoint, currentHoverPoint];
-                if (dynamicLine) {
-                    dynamicLine.geometry.setFromPoints(points);
-                    dynamicLine.geometry.attributes.position.needsUpdate = true;
-                } else {
-                    const lineGeom = new THREE.BufferGeometry().setFromPoints(points);
-                    const lineMat = new THREE.LineBasicMaterial({ color: 0xef4444, linewidth: 5 });
-                    dynamicLine = new THREE.Line(lineGeom, lineMat);
-                    scene.add(dynamicLine);
-                }
+                if (dynamicLaserCylinder) scene.remove(dynamicLaserCylinder);
+                dynamicLaserCylinder = createLaserCylinder(firstPoint, currentHoverPoint);
+                if (dynamicLaserCylinder) scene.add(dynamicLaserCylinder);
 
-                const liveDistCm = (firstPoint.distanceTo(currentHoverPoint) * 100).toFixed(2);
+                const liveDistCm = (firstPoint.distanceTo(currentHoverPoint) * WORLD_SCALE_RATIO).toFixed(2);
                 document.getElementById('status-text').innerText = `Laser Tracking: ${liveDistCm} cm (Click to Lock)`;
             }
         });
@@ -426,24 +446,17 @@
                     const clickedPoint = intersects[0].point;
 
                     if (!firstPoint) {
-                        // First Point Clicked: Start tracking
                         firstPoint = clickedPoint;
                         document.getElementById('status-text').innerText = `First Point Set! Move cursor to track laser distance.`;
                     } else {
-                        // Second Point Clicked: Lock line in place
-                        const finalDistCm = (firstPoint.distanceTo(clickedPoint) * 100).toFixed(2);
+                        const finalDistCm = (firstPoint.distanceTo(clickedPoint) * WORLD_SCALE_RATIO).toFixed(2);
 
-                        const points = [firstPoint, clickedPoint];
-                        const lockedGeom = new THREE.BufferGeometry().setFromPoints(points);
-                        const lockedMat = new THREE.LineBasicMaterial({ color: 0xef4444, linewidth: 5 });
-                        const lockedLine = new THREE.Line(lockedGeom, lockedMat);
+                        const lockedBeam = createLaserCylinder(firstPoint, clickedPoint);
+                        if (lockedBeam && activeLaserGroup) activeLaserGroup.add(lockedBeam);
 
-                        if (activeLaserGroup) activeLaserGroup.add(lockedLine);
-
-                        // Clear temporary dynamic line
-                        if (dynamicLine) {
-                            scene.remove(dynamicLine);
-                            dynamicLine = null;
+                        if (dynamicLaserCylinder) {
+                            scene.remove(dynamicLaserCylinder);
+                            dynamicLaserCylinder = null;
                         }
 
                         document.getElementById('status-text').innerText = `Laser Measurement Locked: ${finalDistCm} cm`;
@@ -491,7 +504,7 @@
                     const readout = document.getElementById('height-readout');
                     if (slider && camera) {
                         slider.value = camera.position.y;
-                        if (readout) readout.innerText = `${(camera.position.y * 100).toFixed(2)} cm`;
+                        if (readout) readout.innerText = `${(camera.position.y * WORLD_SCALE_RATIO).toFixed(2)} cm`;
                     }
                 });
 
@@ -503,7 +516,15 @@
 
                 clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1.45);
 
-                // Dynamic camera headlight
+                // Laser Beam Material: Neon Red, Ignore Depth Buffer so it renders over van surfaces
+                laserMaterial = new THREE.MeshBasicMaterial({
+                    color: 0xef4444,
+                    depthTest: false,
+                    transparent: true,
+                    opacity: 0.95
+                });
+
+                // Camera Headlight
                 const cameraLight = new THREE.DirectionalLight(0xffffff, 1.2);
                 cameraLight.position.set(0, 2, 4);
                 camera.add(cameraLight);
@@ -544,8 +565,14 @@
 
                     const box = new THREE.Box3().setFromObject(vanGroup);
                     const size = box.getSize(new THREE.Vector3());
-                    const scaleFactor = 4.97 / Math.max(size.x, size.y, size.z);
+                    const rawMaxDimension = Math.max(size.x, size.y, size.z);
+
+                    // Calibrate Real-World Physical Scale: 1 Three.js World Unit = 100 cm
+                    const scaleFactor = 4.973 / rawMaxDimension;
                     vanGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+                    // Calculate precise scale multiplier (World Units -> cm)
+                    WORLD_SCALE_RATIO = TRANSIT_REAL_LENGTH_CM / 4.973;
 
                     const scaledBox = new THREE.Box3().setFromObject(vanGroup);
                     const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
@@ -570,7 +597,12 @@
                     });
 
                     scene.add(vanGroup);
-                    statusText.innerText = "Loaded Transit Custom - v6.7 Active!";
+                    
+                    // Initial readout calibration
+                    const initialReadout = document.getElementById('height-readout');
+                    if (initialReadout) initialReadout.innerText = `${(4.2 * WORLD_SCALE_RATIO).toFixed(2)} cm`;
+
+                    statusText.innerText = "Loaded Transit Custom - v6.8 Calibrated Engine Active!";
                 }
 
                 gltfLoader.load(
