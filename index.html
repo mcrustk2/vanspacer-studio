@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v7.2 Flattened Geometry Precision] Van Spacer Studio</title>
+    <title>[v7.3] Van Spacer Studio - Live 3D Builder</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
@@ -93,7 +93,6 @@
         let furnitureObjects = [], selectedFurniture = null;
         let clippingEnabled = true, bulkheadVisible = true, measureMode = false;
         
-        // Laser 3D scene objects
         let firstPoint = null;
         let liveTrackingGroup = null;
         let persistentLaserGroup = null;
@@ -123,11 +122,9 @@
             document.getElementById('status-text').innerText = clippingEnabled ? "Roof Cutaway Active" : "Full Van Active";
         };
 
-        // Creates depth-rendered 3D Laser Beam with End Spheres directly in World Space
         function create3DLaserSegment(p1, p2, isTracking = false) {
             const group = new THREE.Group();
 
-            // Laser Line Geometry
             const lineGeom = new THREE.BufferGeometry().setFromPoints([p1, p2]);
             const lineMat = new THREE.LineBasicMaterial({
                 color: 0xef4444,
@@ -140,7 +137,6 @@
             line.renderOrder = 999;
             group.add(line);
 
-            // Anchor Spheres
             const sphereGeom = new THREE.SphereGeometry(0.025, 16, 16);
             const sphereMat = new THREE.MeshBasicMaterial({
                 color: 0xef4444,
@@ -311,7 +307,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v7.2 Flattened Mesh Engine</span>
+            <span class="version-tag">v7.3 Standardized Precision</span>
         </div>
 
         <!-- ACCORDION 1: CHASSIS & VIEWS -->
@@ -428,7 +424,6 @@
             const intersects = raycaster.intersectObjects(vanGroup.children, true);
 
             if (intersects.length > 0) {
-                // Return exact World Space point directly
                 return intersects[0].point.clone();
             }
             return null;
@@ -470,7 +465,6 @@
                             liveTrackingGroup = null;
                         }
 
-                        // Direct World Distance calculation in metric CM
                         const finalCm = (firstPoint.distanceTo(hitPoint) * 100).toFixed(2);
                         document.getElementById('status-text').innerText = `Laser Measurement Locked: ${finalCm} cm`;
                         firstPoint = null;
@@ -570,26 +564,33 @@
                 function processAndAddGLB(gltf) {
                     vanGroup = gltf.scene;
 
-                    // 1. Calculate unscaled initial bounding box
-                    const rawBox = new THREE.Box3().setFromObject(vanGroup);
-                    const rawSize = rawBox.getSize(new THREE.Vector3());
-                    const rawMaxDimension = Math.max(rawSize.x, rawSize.y, rawSize.z);
+                    // Standardize orientation (-90 deg on X)
+                    vanGroup.rotation.x = -Math.PI / 2;
+                    vanGroup.updateMatrixWorld(true);
 
-                    // Real Ford Transit Custom SWB length = 4.973 meters
+                    // Compute overall bounding box in meters
+                    const box = new THREE.Box3().setFromObject(vanGroup);
+                    const size = box.getSize(new THREE.Vector3());
+                    const rawMaxDimension = Math.max(size.x, size.y, size.z);
+
+                    // Scale to exact Ford Transit Custom SWB length (4.973 meters = 497.30 cm)
                     const targetScale = 4.973 / rawMaxDimension;
+                    vanGroup.scale.set(targetScale, targetScale, targetScale);
+
+                    // Re-align ground base
+                    const scaledBox = new THREE.Box3().setFromObject(vanGroup);
+                    const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
+                    vanGroup.position.x = -scaledCenter.x;
+                    vanGroup.position.y = -scaledBox.min.y;
+                    vanGroup.position.z = -scaledCenter.z;
 
                     rimMeshes = []; tyreMeshes = []; bulkheadMeshes = [];
 
-                    // 2. FLATTEN ALL MESH GEOMETRIES INTO WORLD SPACE (BAKE ROTATIONS & SCALES)
                     vanGroup.traverse((child) => {
                         if (child.isMesh) {
-                            // Bake orienting rotation (-90 deg on X) and scale directly into raw geometry vertices
-                            child.geometry.rotateX(-Math.PI / 2);
-                            child.geometry.scale(targetScale, targetScale, targetScale);
                             child.geometry.computeVertexNormals();
-                            child.geometry.computeBoundingBox();
-
                             const name = child.name.toLowerCase();
+
                             if (name.includes('bulkhead')) bulkheadMeshes.push(child);
                             if (name.includes('rims') || name.includes('rim')) { child.material = rimMaterial; rimMeshes.push(child); }
                             else if (name.includes('tyres') || name.includes('tyre') || name.includes('tire')) { child.material = tyreMaterial; tyreMeshes.push(child); }
@@ -599,22 +600,8 @@
                         }
                     });
 
-                    // 3. Reset vanGroup container transformation matrices to clean Identity
-                    vanGroup.rotation.set(0, 0, 0);
-                    vanGroup.scale.set(1, 1, 1);
-
-                    // 4. Center van ground base at (0, 0, 0)
-                    const bakedBox = new THREE.Box3().setFromObject(vanGroup);
-                    const bakedCenter = bakedBox.getCenter(new THREE.Vector3());
-                    
-                    vanGroup.traverse((child) => {
-                        if (child.isMesh) {
-                            child.geometry.translate(-bakedCenter.x, -bakedBox.min.y, -bakedCenter.z);
-                        }
-                    });
-
                     scene.add(vanGroup);
-                    statusText.innerText = "Loaded Transit Custom - v7.2 Flattened Engine Active!";
+                    statusText.innerText = "Loaded Transit Custom - v7.3 Engine Active!";
                 }
 
                 gltfLoader.load(
