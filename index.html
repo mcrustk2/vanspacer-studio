@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v6.5] Van Spacer Studio - Live 3D Builder</title>
+    <title>[v6.6 Complete] Van Spacer Studio - Live 3D Builder</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; }
@@ -87,7 +87,7 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/DRACOLoader.js"></script>
 
     <script>
-        // Global engine variable declarations
+        // Global engine declarations
         var renderer, camera, scene, controls, transformControls, clipPlane, vanGroup = null;
         var bodyMaterial, rimMaterial, tyreMaterial, glassMaterial, seatMaterial;
         var rimMeshes = [], tyreMeshes = [], bulkheadMeshes = [];
@@ -148,7 +148,7 @@
                     btn.innerText = "Laser Measure: ON (Click Points)";
                     btn.style.background = "#ef4444";
                 }
-                if (el) el.innerText = "Click any 2 points on van to retain laser line";
+                if (el) el.innerText = "Click any 2 points on van to retain red laser line";
             }
         };
 
@@ -271,9 +271,10 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v6.5 Dynamic Engine</span>
+            <span class="version-tag">v6.6 Complete</span>
         </div>
 
+        <!-- ACCORDION SECTION 1: CHASSIS & VIEWS -->
         <div class="accordion-item">
             <div class="accordion-header" onclick="toggleAccordion(this)">1. Chassis & Views</div>
             <div class="accordion-content">
@@ -289,6 +290,26 @@
                     <button id="view-3d" class="active" onclick="setViewMode('3d')">3D Orbit Mode</button>
                     <button id="view-top" style="margin-top:4px;" onclick="setViewMode('top')">2D Top Floorplan</button>
                 </div>
+                <div>
+                    <label>Roof Cut Height</label>
+                    <input type="range" id="clip-slider" min="0.2" max="2.2" step="0.05" value="1.45" oninput="updateCutaway(this.value)">
+                </div>
+                <div>
+                    <button id="cutaway-toggle" class="primary" onclick="toggleCutawayPlane()">Toggle Roof Cutaway</button>
+                </div>
+                <div>
+                    <button id="bulkhead-toggle" onclick="toggleBulkhead()">Bulkhead: Included</button>
+                </div>
+                <div>
+                    <button id="measure-toggle" style="background:#0284c7; margin-top:6px;" onclick="toggleMeasureTool()">Laser Measure: OFF</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ACCORDION SECTION 2: PAINT & FINISHES -->
+        <div class="accordion-item">
+            <div class="accordion-header" onclick="toggleAccordion(this)">2. Paint & Finishes</div>
+            <div class="accordion-content">
                 <div>
                     <label for="paint-color">Van Paint Colour</label>
                     <select id="paint-color" onchange="changeVanColor(this.value)">
@@ -314,24 +335,12 @@
                         <option value="0x1f2937">Dark Slate Tyre</option>
                     </select>
                 </div>
-                <div>
-                    <label>Roof Cut Height</label>
-                    <input type="range" id="clip-slider" min="0.2" max="2.2" step="0.05" value="1.45" oninput="updateCutaway(this.value)">
-                </div>
-                <div>
-                    <button id="cutaway-toggle" class="primary" onclick="toggleCutawayPlane()">Toggle Roof Cutaway</button>
-                </div>
-                <div>
-                    <button id="bulkhead-toggle" onclick="toggleBulkhead()">Bulkhead: Included</button>
-                </div>
-                <div>
-                    <button id="measure-toggle" style="background:#0284c7; margin-top:6px;" onclick="toggleMeasureTool()">Laser Measure: OFF</button>
-                </div>
             </div>
         </div>
 
+        <!-- ACCORDION SECTION 3: ASSET LIBRARY -->
         <div class="accordion-item">
-            <div class="accordion-header" onclick="toggleAccordion(this)">2. Asset Library</div>
+            <div class="accordion-header" onclick="toggleAccordion(this)">3. Asset Library</div>
             <div class="accordion-content">
                 <div class="library-grid">
                     <div class="item-card" onclick="spawnFurniture('bed')">
@@ -346,7 +355,7 @@
                         <strong>Bench / Sofa Bed</strong>
                         <span style="color:#64748b;">1.5m x 0.6m</span>
                     </div>
-                    <div class="item-card" onclick="spawnFurniture('cabinet')">
+                    <div class="item-card" onclick="spawnFurniture('tall')">
                         <strong>Tall Cabinet</strong>
                         <span style="color:#64748b;">0.6m x 0.5m</span>
                     </div>
@@ -378,34 +387,54 @@
 
             raycaster.setFromCamera(mouse, camera);
 
+            // Handle Laser Measuring Tool
             if (measureMode && vanGroup) {
                 var intersects = raycaster.intersectObjects(vanGroup.children, true);
                 if (intersects.length > 0) {
-                    var p = intersects[0].point;
+                    var p = intersects[0].point.clone();
                     measurePoints.push(p);
 
-                    if (measurePoints.length === 2) {
-                        var dist = measurePoints[0].distanceTo(measurePoints[1]);
-                        var mm = (dist * 1000).toFixed(0);
-                        var meters = dist.toFixed(2);
+                    // Add a small red dot indicator at point 1
+                    if (measurePoints.length === 1 && activeLaserGroup) {
+                        var dotGeom = new THREE.SphereGeometry(0.025, 12, 12);
+                        var dotMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+                        var dot = new THREE.Mesh(dotGeom, dotMat);
+                        dot.position.copy(p);
+                        activeLaserGroup.add(dot);
+                    }
 
-                        var lineGeom = new THREE.BufferGeometry().setFromPoints(measurePoints);
-                        var lineMat = new THREE.LineBasicMaterial({ color: 0xef4444, linewidth: 5 });
-                        var laserLine = new THREE.Line(lineGeom, lineMat);
-                        
-                        if (activeLaserGroup) activeLaserGroup.add(laserLine);
+                    if (measurePoints.length === 2) {
+                        var distMeters = measurePoints[0].distanceTo(measurePoints[1]);
+                        var distCm = (distMeters * 100).toFixed(2);
+
+                        // Draw thick 3D Laser Tube/Line
+                        var path = new THREE.CatmullRomCurve3([measurePoints[0], measurePoints[1]]);
+                        var tubeGeom = new THREE.TubeGeometry(path, 1, 0.015, 8, false);
+                        var tubeMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+                        var tubeLine = new THREE.Mesh(tubeGeom, tubeMat);
+
+                        // Fallback line for zero-depth rendering
+                        var lineGeom = new THREE.BufferGeometry().setFromPoints([measurePoints[0], measurePoints[1]]);
+                        var lineMat = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 5 });
+                        var rawLine = new THREE.Line(lineGeom, lineMat);
+
+                        if (activeLaserGroup) {
+                            activeLaserGroup.add(tubeLine);
+                            activeLaserGroup.add(rawLine);
+                        }
 
                         var el = document.getElementById('status-text');
-                        if (el) el.innerText = "Laser Line Retained: " + meters + "m (" + mm + " mm)";
+                        if (el) el.innerText = "Laser Distance: " + distCm + " cm";
                         measurePoints = [];
                     } else {
                         var el2 = document.getElementById('status-text');
-                        if (el2) el2.innerText = "Point 1 Set! Click Point 2 to create red laser line.";
+                        if (el2) el2.innerText = "Point 1 Set! Click Point 2 to complete measurement.";
                     }
                 }
                 return;
             }
 
+            // Handle Selecting Furniture Objects
             if (furnitureObjects.length > 0) {
                 var furnitureHits = raycaster.intersectObjects(furnitureObjects, true);
                 if (furnitureHits.length > 0) {
@@ -457,7 +486,7 @@
 
                 clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1.45);
 
-                // --- CAMERA-ATTACHED HEADLIGHT (Light follows view 360 degrees) ---
+                // Dynamic camera-attached headlight (360 degree tracking light)
                 var cameraLight = new THREE.DirectionalLight(0xffffff, 1.3);
                 cameraLight.position.set(0, 2, 4);
                 camera.add(cameraLight);
@@ -524,7 +553,7 @@
                     });
 
                     scene.add(vanGroup);
-                    if (statusText) statusText.innerText = "Loaded Transit Custom - v6.5 Active!";
+                    if (statusText) statusText.innerText = "Loaded Transit Custom - v6.6 Active!";
                 }
 
                 gltfLoader.load(
