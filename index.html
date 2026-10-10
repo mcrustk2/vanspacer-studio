@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v7.0] Van Spacer Studio - Live 3D Builder</title>
+    <title>[v7.1 Surface Lock] Van Spacer Studio - Live 3D Builder</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
@@ -125,13 +125,12 @@
             document.getElementById('status-text').innerText = clippingEnabled ? "Roof Cutaway Active" : "Full Van Active";
         };
 
-        // Calculates exact physical distance in centimeters factoring in model scale
+        // Calculates true 1:1 real-world physical distance in centimeters
         function calculateCmDistance(p1, p2) {
-            if (!vanGroup) return "0.00";
-            const rawDist = p1.distanceTo(p2);
-            // vanGroup.scale.x normalizes CAD geometry to world meters (1 unit = 100cm)
-            const cmVal = rawDist * vanGroup.scale.x * 100;
-            return cmVal.toFixed(2);
+            if (!p1 || !p2) return "0.00";
+            // 1 World Unit in our calibrated scene = 1 meter (100 cm)
+            const realCm = p1.distanceTo(p2) * 100;
+            return realCm.toFixed(2);
         }
 
         // Project 3D World Vector to 2D Screen Canvas
@@ -169,7 +168,7 @@
                 laserCtx.beginPath(); laserCtx.arc(p2.x, p2.y, 5, 0, Math.PI * 2); laserCtx.fill();
             });
 
-            // 2. Draw Live Rubber-Banding Tracking Line
+            // 2. Draw Live Tracking Rubber-Banding Line
             if (firstWorldPoint && hoverWorldPoint) {
                 const p1 = worldToScreen(firstWorldPoint);
                 const p2 = worldToScreen(hoverWorldPoint);
@@ -326,7 +325,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v7.0 Normalized Precision</span>
+            <span class="version-tag">v7.1 Surface Lock</span>
         </div>
 
         <!-- ACCORDION 1: CHASSIS & VIEWS -->
@@ -433,46 +432,57 @@
     </div>
 
     <script>
-        // Mouse move listener for live laser tracking
-        window.addEventListener('mousemove', (event) => {
-            if (!measureMode || !firstWorldPoint || !vanGroup || !camera) return;
+        // Surface-Lock Raycaster helper: grabs strictly the first front-facing exterior surface point
+        function getSurfacePoint(event) {
+            if (!vanGroup || !camera) return null;
 
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
             raycaster.setFromCamera(mouse, camera);
+            
+            // Strictly intersect visible exterior meshes
             const intersects = raycaster.intersectObjects(vanGroup.children, true);
 
-            if (intersects.length > 0) {
-                hoverWorldPoint = intersects[0].point.clone();
+            // Filter for first valid front-surface intersection
+            for (let i = 0; i < intersects.length; i++) {
+                const hit = intersects[i];
+                if (hit.object && hit.object.visible) {
+                    // Extract exact transformed 3D world coordinate
+                    return hit.point.clone();
+                }
+            }
+            return null;
+        }
+
+        // Live mouse move listener
+        window.addEventListener('mousemove', (event) => {
+            if (!measureMode || !firstWorldPoint) return;
+
+            const surfacePt = getSurfacePoint(event);
+            if (surfacePt) {
+                hoverWorldPoint = surfacePt;
                 const distCm = calculateCmDistance(firstWorldPoint, hoverWorldPoint);
                 document.getElementById('status-text').innerText = `Laser Tracking: ${distCm} cm (Click to Lock)`;
                 drawLaserCanvas();
             }
         });
 
-        // Click listener for anchoring points
+        // Click listener for locking points
         window.addEventListener('click', (event) => {
             if (event.clientX > window.innerWidth - 340 || event.clientX < 80) return;
             if (!camera || !scene) return;
 
-            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-
-            raycaster.setFromCamera(mouse, camera);
-
-            if (measureMode && vanGroup) {
-                const intersects = raycaster.intersectObjects(vanGroup.children, true);
-                if (intersects.length > 0) {
-                    const clickedPoint = intersects[0].point.clone();
-
+            if (measureMode) {
+                const surfacePt = getSurfacePoint(event);
+                if (surfacePt) {
                     if (!firstWorldPoint) {
-                        firstWorldPoint = clickedPoint;
+                        firstWorldPoint = surfacePt;
                         document.getElementById('status-text').innerText = `First Point Set! Move cursor to track laser distance.`;
                     } else {
-                        const finalDistCm = calculateCmDistance(firstWorldPoint, clickedPoint);
+                        const finalDistCm = calculateCmDistance(firstWorldPoint, surfacePt);
 
-                        persistentPairs.push({ p1: firstWorldPoint.clone(), p2: clickedPoint.clone() });
+                        persistentPairs.push({ p1: firstWorldPoint.clone(), p2: surfacePt.clone() });
 
                         firstWorldPoint = null;
                         hoverWorldPoint = null;
@@ -485,6 +495,10 @@
             }
 
             if (furnitureObjects.length > 0) {
+                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                raycaster.setFromCamera(mouse, camera);
+
                 const furnitureHits = raycaster.intersectObjects(furnitureObjects, true);
                 if (furnitureHits.length > 0) {
                     selectedFurniture = furnitureHits[0].object;
@@ -579,17 +593,20 @@
                     vanGroup = gltf.scene;
                     vanGroup.rotation.x = -Math.PI / 2;
 
+                    // Calculate bounding box and scale to exact Ford Transit Custom SWB length (4.973 meters)
                     const box = new THREE.Box3().setFromObject(vanGroup);
                     const size = box.getSize(new THREE.Vector3());
                     const scaleFactor = 4.973 / Math.max(size.x, size.y, size.z);
                     vanGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
 
+                    // Re-center model at origin (0, 0, 0)
                     const scaledBox = new THREE.Box3().setFromObject(vanGroup);
                     const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
                     vanGroup.position.x = -scaledCenter.x;
                     vanGroup.position.y = -scaledBox.min.y;
                     vanGroup.position.z = -scaledCenter.z;
 
+                    // Bake matrix world so world coordinates remain static during zoom
                     vanGroup.updateMatrixWorld(true);
 
                     rimMeshes = []; tyreMeshes = []; bulkheadMeshes = [];
@@ -609,7 +626,7 @@
                     });
 
                     scene.add(vanGroup);
-                    statusText.innerText = "Loaded Transit Custom - v7.0 Engine Active!";
+                    statusText.innerText = "Loaded Transit Custom - v7.1 Surface Lock Engine Active!";
                 }
 
                 gltfLoader.load(
