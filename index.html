@@ -3,12 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v7.1 Surface Lock] Van Spacer Studio - Live 3D Builder</title>
+    <title>[v7.2 Flattened Geometry Precision] Van Spacer Studio</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
         #canvas-container { width: 100vw; height: 100vh; display: block; position: absolute; top:0; left:0; z-index: 1; }
-        #laser-canvas { width: 100vw; height: 100vh; display: block; position: absolute; top:0; left:0; z-index: 2; pointer-events: none; }
         
         #ui-sidebar {
             position: absolute; top: 0; right: 0; width: 340px; height: 100vh;
@@ -94,12 +93,11 @@
         let furnitureObjects = [], selectedFurniture = null;
         let clippingEnabled = true, bulkheadVisible = true, measureMode = false;
         
-        // Laser tracking state
-        let firstWorldPoint = null;
-        let hoverWorldPoint = null;
-        let persistentPairs = [];
+        // Laser 3D scene objects
+        let firstPoint = null;
+        let liveTrackingGroup = null;
+        let persistentLaserGroup = null;
 
-        let laserCtx = null;
         let raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
 
         window.toggleAccordion = function(header) { header.parentElement.classList.toggle('collapsed'); };
@@ -125,82 +123,71 @@
             document.getElementById('status-text').innerText = clippingEnabled ? "Roof Cutaway Active" : "Full Van Active";
         };
 
-        // Calculates true 1:1 real-world physical distance in centimeters
-        function calculateCmDistance(p1, p2) {
-            if (!p1 || !p2) return "0.00";
-            // 1 World Unit in our calibrated scene = 1 meter (100 cm)
-            const realCm = p1.distanceTo(p2) * 100;
-            return realCm.toFixed(2);
-        }
+        // Creates depth-rendered 3D Laser Beam with End Spheres directly in World Space
+        function create3DLaserSegment(p1, p2, isTracking = false) {
+            const group = new THREE.Group();
 
-        // Project 3D World Vector to 2D Screen Canvas
-        function worldToScreen(worldVec) {
-            if (!camera) return { x: 0, y: 0 };
-            const v = worldVec.clone();
-            v.project(camera);
-            return {
-                x: (v.x * 0.5 + 0.5) * window.innerWidth,
-                y: -(v.y * 0.5 - 0.5) * window.innerHeight
-            };
-        }
+            // Laser Line Geometry
+            const lineGeom = new THREE.BufferGeometry().setFromPoints([p1, p2]);
+            const lineMat = new THREE.LineBasicMaterial({
+                color: 0xef4444,
+                linewidth: 3,
+                depthTest: false,
+                transparent: true,
+                opacity: isTracking ? 0.7 : 1.0
+            });
+            const line = new THREE.Line(lineGeom, lineMat);
+            line.renderOrder = 999;
+            group.add(line);
 
-        function drawLaserCanvas() {
-            if (!laserCtx) return;
-            laserCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-
-            if (!measureMode) return;
-
-            laserCtx.lineWidth = 4;
-            laserCtx.strokeStyle = '#ef4444';
-            laserCtx.fillStyle = '#ef4444';
-
-            // 1. Draw Persistent Locked Lines
-            persistentPairs.forEach(pair => {
-                const p1 = worldToScreen(pair.p1);
-                const p2 = worldToScreen(pair.p2);
-
-                laserCtx.beginPath();
-                laserCtx.moveTo(p1.x, p1.y);
-                laserCtx.lineTo(p2.x, p2.y);
-                laserCtx.stroke();
-
-                laserCtx.beginPath(); laserCtx.arc(p1.x, p1.y, 5, 0, Math.PI * 2); laserCtx.fill();
-                laserCtx.beginPath(); laserCtx.arc(p2.x, p2.y, 5, 0, Math.PI * 2); laserCtx.fill();
+            // Anchor Spheres
+            const sphereGeom = new THREE.SphereGeometry(0.025, 16, 16);
+            const sphereMat = new THREE.MeshBasicMaterial({
+                color: 0xef4444,
+                depthTest: false,
+                transparent: true,
+                opacity: 0.95
             });
 
-            // 2. Draw Live Tracking Rubber-Banding Line
-            if (firstWorldPoint && hoverWorldPoint) {
-                const p1 = worldToScreen(firstWorldPoint);
-                const p2 = worldToScreen(hoverWorldPoint);
+            const s1 = new THREE.Mesh(sphereGeom, sphereMat);
+            s1.position.copy(p1);
+            s1.renderOrder = 1000;
+            group.add(s1);
 
-                laserCtx.beginPath();
-                laserCtx.setLineDash([6, 6]);
-                laserCtx.moveTo(p1.x, p1.y);
-                laserCtx.lineTo(p2.x, p2.y);
-                laserCtx.stroke();
-                laserCtx.setLineDash([]);
+            const s2 = new THREE.Mesh(sphereGeom, sphereMat);
+            s2.position.copy(p2);
+            s2.renderOrder = 1000;
+            group.add(s2);
 
-                laserCtx.beginPath(); laserCtx.arc(p1.x, p1.y, 6, 0, Math.PI * 2); laserCtx.fill();
-                laserCtx.beginPath(); laserCtx.arc(p2.x, p2.y, 4, 0, Math.PI * 2); laserCtx.fill();
-            }
+            return group;
         }
 
         window.toggleMeasureTool = function() {
             measureMode = !measureMode;
-            firstWorldPoint = null;
-            hoverWorldPoint = null;
+            firstPoint = null;
+
+            if (liveTrackingGroup) {
+                scene.remove(liveTrackingGroup);
+                liveTrackingGroup = null;
+            }
 
             const btn = document.getElementById('measure-toggle');
             
             if (!measureMode) {
-                persistentPairs = [];
-                if (laserCtx) laserCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+                if (persistentLaserGroup) {
+                    scene.remove(persistentLaserGroup);
+                    persistentLaserGroup = null;
+                }
                 if (btn) {
                     btn.innerText = "Laser Measure: OFF";
                     btn.style.background = "#0284c7";
                 }
                 document.getElementById('status-text').innerText = "Laser Tool Disabled & Lines Cleared";
             } else {
+                if (!persistentLaserGroup) {
+                    persistentLaserGroup = new THREE.Group();
+                    scene.add(persistentLaserGroup);
+                }
                 if (btn) {
                     btn.innerText = "Laser Measure: ON (Click Start)";
                     btn.style.background = "#ef4444";
@@ -311,7 +298,6 @@
 </head>
 <body>
     <div id="canvas-container"></div>
-    <canvas id="laser-canvas"></canvas>
 
     <!-- Vertical Relative Camera Height Control Bar -->
     <div id="height-slider-container">
@@ -325,7 +311,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v7.1 Surface Lock</span>
+            <span class="version-tag">v7.2 Flattened Mesh Engine</span>
         </div>
 
         <!-- ACCORDION 1: CHASSIS & VIEWS -->
@@ -432,63 +418,62 @@
     </div>
 
     <script>
-        // Surface-Lock Raycaster helper: grabs strictly the first front-facing exterior surface point
-        function getSurfacePoint(event) {
+        function getRaycastHit(event) {
             if (!vanGroup || !camera) return null;
 
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
             raycaster.setFromCamera(mouse, camera);
-            
-            // Strictly intersect visible exterior meshes
             const intersects = raycaster.intersectObjects(vanGroup.children, true);
 
-            // Filter for first valid front-surface intersection
-            for (let i = 0; i < intersects.length; i++) {
-                const hit = intersects[i];
-                if (hit.object && hit.object.visible) {
-                    // Extract exact transformed 3D world coordinate
-                    return hit.point.clone();
-                }
+            if (intersects.length > 0) {
+                // Return exact World Space point directly
+                return intersects[0].point.clone();
             }
             return null;
         }
 
-        // Live mouse move listener
+        // Live Tracking Listener
         window.addEventListener('mousemove', (event) => {
-            if (!measureMode || !firstWorldPoint) return;
+            if (!measureMode || !firstPoint) return;
 
-            const surfacePt = getSurfacePoint(event);
-            if (surfacePt) {
-                hoverWorldPoint = surfacePt;
-                const distCm = calculateCmDistance(firstWorldPoint, hoverWorldPoint);
+            const currentHover = getRaycastHit(event);
+            if (currentHover) {
+                if (liveTrackingGroup) scene.remove(liveTrackingGroup);
+                liveTrackingGroup = create3DLaserSegment(firstPoint, currentHover, true);
+                scene.add(liveTrackingGroup);
+
+                // 1 Scene Unit = 1 Meter = 100 Centimeters
+                const distCm = (firstPoint.distanceTo(currentHover) * 100).toFixed(2);
                 document.getElementById('status-text').innerText = `Laser Tracking: ${distCm} cm (Click to Lock)`;
-                drawLaserCanvas();
             }
         });
 
-        // Click listener for locking points
+        // Click Anchor Listener
         window.addEventListener('click', (event) => {
             if (event.clientX > window.innerWidth - 340 || event.clientX < 80) return;
             if (!camera || !scene) return;
 
             if (measureMode) {
-                const surfacePt = getSurfacePoint(event);
-                if (surfacePt) {
-                    if (!firstWorldPoint) {
-                        firstWorldPoint = surfacePt;
+                const hitPoint = getRaycastHit(event);
+                if (hitPoint) {
+                    if (!firstPoint) {
+                        firstPoint = hitPoint;
                         document.getElementById('status-text').innerText = `First Point Set! Move cursor to track laser distance.`;
                     } else {
-                        const finalDistCm = calculateCmDistance(firstWorldPoint, surfacePt);
+                        const lockedSegment = create3DLaserSegment(firstPoint, hitPoint, false);
+                        if (persistentLaserGroup) persistentLaserGroup.add(lockedSegment);
 
-                        persistentPairs.push({ p1: firstWorldPoint.clone(), p2: surfacePt.clone() });
+                        if (liveTrackingGroup) {
+                            scene.remove(liveTrackingGroup);
+                            liveTrackingGroup = null;
+                        }
 
-                        firstWorldPoint = null;
-                        hoverWorldPoint = null;
-
-                        document.getElementById('status-text').innerText = `Laser Measurement Locked: ${finalDistCm} cm`;
-                        drawLaserCanvas();
+                        // Direct World Distance calculation in metric CM
+                        const finalCm = (firstPoint.distanceTo(hitPoint) * 100).toFixed(2);
+                        document.getElementById('status-text').innerText = `Laser Measurement Locked: ${finalCm} cm`;
+                        firstPoint = null;
                     }
                 }
                 return;
@@ -511,11 +496,6 @@
         window.addEventListener('DOMContentLoaded', () => {
             const container = document.getElementById('canvas-container');
             const statusText = document.getElementById('status-text');
-
-            const laserCanvas = document.getElementById('laser-canvas');
-            laserCanvas.width = window.innerWidth;
-            laserCanvas.height = window.innerHeight;
-            laserCtx = laserCanvas.getContext('2d');
 
             try {
                 scene = new THREE.Scene();
@@ -543,7 +523,6 @@
                         slider.value = camera.position.y;
                         if (readout) readout.innerText = `${(camera.position.y * 100).toFixed(2)} cm`;
                     }
-                    drawLaserCanvas();
                 });
 
                 transformControls = new THREE.TransformControls(camera, renderer.domElement);
@@ -554,7 +533,6 @@
 
                 clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1.45);
 
-                // Dynamic camera headlight
                 const cameraLight = new THREE.DirectionalLight(0xffffff, 1.2);
                 cameraLight.position.set(0, 2, 4);
                 camera.add(cameraLight);
@@ -591,31 +569,27 @@
 
                 function processAndAddGLB(gltf) {
                     vanGroup = gltf.scene;
-                    vanGroup.rotation.x = -Math.PI / 2;
 
-                    // Calculate bounding box and scale to exact Ford Transit Custom SWB length (4.973 meters)
-                    const box = new THREE.Box3().setFromObject(vanGroup);
-                    const size = box.getSize(new THREE.Vector3());
-                    const scaleFactor = 4.973 / Math.max(size.x, size.y, size.z);
-                    vanGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
+                    // 1. Calculate unscaled initial bounding box
+                    const rawBox = new THREE.Box3().setFromObject(vanGroup);
+                    const rawSize = rawBox.getSize(new THREE.Vector3());
+                    const rawMaxDimension = Math.max(rawSize.x, rawSize.y, rawSize.z);
 
-                    // Re-center model at origin (0, 0, 0)
-                    const scaledBox = new THREE.Box3().setFromObject(vanGroup);
-                    const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
-                    vanGroup.position.x = -scaledCenter.x;
-                    vanGroup.position.y = -scaledBox.min.y;
-                    vanGroup.position.z = -scaledCenter.z;
-
-                    // Bake matrix world so world coordinates remain static during zoom
-                    vanGroup.updateMatrixWorld(true);
+                    // Real Ford Transit Custom SWB length = 4.973 meters
+                    const targetScale = 4.973 / rawMaxDimension;
 
                     rimMeshes = []; tyreMeshes = []; bulkheadMeshes = [];
 
+                    // 2. FLATTEN ALL MESH GEOMETRIES INTO WORLD SPACE (BAKE ROTATIONS & SCALES)
                     vanGroup.traverse((child) => {
                         if (child.isMesh) {
+                            // Bake orienting rotation (-90 deg on X) and scale directly into raw geometry vertices
+                            child.geometry.rotateX(-Math.PI / 2);
+                            child.geometry.scale(targetScale, targetScale, targetScale);
                             child.geometry.computeVertexNormals();
-                            const name = child.name.toLowerCase();
+                            child.geometry.computeBoundingBox();
 
+                            const name = child.name.toLowerCase();
                             if (name.includes('bulkhead')) bulkheadMeshes.push(child);
                             if (name.includes('rims') || name.includes('rim')) { child.material = rimMaterial; rimMeshes.push(child); }
                             else if (name.includes('tyres') || name.includes('tyre') || name.includes('tire')) { child.material = tyreMaterial; tyreMeshes.push(child); }
@@ -625,8 +599,22 @@
                         }
                     });
 
+                    // 3. Reset vanGroup container transformation matrices to clean Identity
+                    vanGroup.rotation.set(0, 0, 0);
+                    vanGroup.scale.set(1, 1, 1);
+
+                    // 4. Center van ground base at (0, 0, 0)
+                    const bakedBox = new THREE.Box3().setFromObject(vanGroup);
+                    const bakedCenter = bakedBox.getCenter(new THREE.Vector3());
+                    
+                    vanGroup.traverse((child) => {
+                        if (child.isMesh) {
+                            child.geometry.translate(-bakedCenter.x, -bakedBox.min.y, -bakedCenter.z);
+                        }
+                    });
+
                     scene.add(vanGroup);
-                    statusText.innerText = "Loaded Transit Custom - v7.1 Surface Lock Engine Active!";
+                    statusText.innerText = "Loaded Transit Custom - v7.2 Flattened Engine Active!";
                 }
 
                 gltfLoader.load(
@@ -642,16 +630,12 @@
                     camera.aspect = window.innerWidth / window.innerHeight;
                     camera.updateProjectionMatrix();
                     renderer.setSize(window.innerWidth, window.innerHeight);
-                    laserCanvas.width = window.innerWidth;
-                    laserCanvas.height = window.innerHeight;
-                    drawLaserCanvas();
                 });
 
                 function animate() {
                     requestAnimationFrame(animate);
                     if (controls) controls.update();
                     if (renderer && scene && camera) renderer.render(scene, camera);
-                    drawLaserCanvas();
                 }
                 animate();
 
