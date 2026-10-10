@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v6.4] Van Spacer Studio - Live 3D Builder</title>
+    <title>[v6.5] Van Spacer Studio - Live 3D Builder</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
+        body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; }
         #canvas-container { width: 100vw; height: 100vh; display: block; position: absolute; top:0; left:0; z-index: 1; }
         
         #ui-sidebar {
@@ -79,7 +79,7 @@
         }
         .highlight { color: #38bdf8; font-weight: 700; }
     </style>
-    <!-- Three.js + GLTFLoader, DRACOLoader & TransformControls -->
+
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/TransformControls.js"></script>
@@ -87,45 +87,50 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/DRACOLoader.js"></script>
 
     <script>
-        // Declarations at global level so event attributes on elements never throw ReferenceError
-        let renderer, camera, scene, controls, transformControls, clipPlane, vanGroup = null;
-        let bodyMaterial, rimMaterial, tyreMaterial, glassMaterial, seatMaterial;
-        let rimMeshes = [], tyreMeshes = [], bulkheadMeshes = [];
-        let furnitureObjects = [], selectedFurniture = null;
-        let clippingEnabled = true, bulkheadVisible = true, measureMode = false;
-        let measurePoints = [], activeLaserGroup = null;
-        let raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
+        // Global engine variable declarations
+        var renderer, camera, scene, controls, transformControls, clipPlane, vanGroup = null;
+        var bodyMaterial, rimMaterial, tyreMaterial, glassMaterial, seatMaterial;
+        var rimMeshes = [], tyreMeshes = [], bulkheadMeshes = [];
+        var furnitureObjects = [], selectedFurniture = null;
+        var clippingEnabled = true, bulkheadVisible = true, measureMode = false;
+        var measurePoints = [], activeLaserGroup = null;
+        var raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
 
-        window.toggleAccordion = function(header) { header.parentElement.classList.toggle('collapsed'); };
+        // Safe global handlers bound before DOM renders
+        window.toggleAccordion = function(header) { 
+            if (header && header.parentElement) header.parentElement.classList.toggle('collapsed'); 
+        };
 
         window.updateCutaway = function(val) {
             if (clipPlane) clipPlane.constant = parseFloat(val);
         };
 
         window.updateCameraHeight = function(val) {
-            const h = parseFloat(val);
+            var h = parseFloat(val);
             if (camera && controls) {
                 camera.position.y = h;
                 controls.update();
             }
-            const readout = document.getElementById('height-readout');
-            if (readout) readout.innerText = `${h.toFixed(1)}m`;
+            var readout = document.getElementById('height-readout');
+            if (readout) readout.innerText = h.toFixed(1) + 'm';
         };
 
         window.toggleCutawayPlane = function() {
             if (!renderer) return;
             clippingEnabled = !clippingEnabled;
             renderer.localClippingEnabled = clippingEnabled;
-            document.getElementById('status-text').innerText = clippingEnabled ? "Roof Cutaway Active" : "Full Van Active";
+            var el = document.getElementById('status-text');
+            if (el) el.innerText = clippingEnabled ? "Roof Cutaway Active" : "Full Van Active";
         };
 
         window.toggleMeasureTool = function() {
             measureMode = !measureMode;
             measurePoints = [];
-            const btn = document.getElementById('measure-toggle');
+            var btn = document.getElementById('measure-toggle');
+            var el = document.getElementById('status-text');
             
             if (!measureMode) {
-                if (activeLaserGroup) {
+                if (activeLaserGroup && scene) {
                     scene.remove(activeLaserGroup);
                     activeLaserGroup = null;
                 }
@@ -133,9 +138,9 @@
                     btn.innerText = "Laser Measure: OFF";
                     btn.style.background = "#0284c7";
                 }
-                document.getElementById('status-text').innerText = "Laser Tool Disabled & Lines Cleared";
+                if (el) el.innerText = "Laser Tool Disabled & Lines Cleared";
             } else {
-                if (!activeLaserGroup) {
+                if (!activeLaserGroup && scene) {
                     activeLaserGroup = new THREE.Group();
                     scene.add(activeLaserGroup);
                 }
@@ -143,23 +148,26 @@
                     btn.innerText = "Laser Measure: ON (Click Points)";
                     btn.style.background = "#ef4444";
                 }
-                document.getElementById('status-text').innerText = "Click any 2 points on van to retain laser line";
+                if (el) el.innerText = "Click any 2 points on van to retain laser line";
             }
         };
 
         window.setGizmoMode = function(mode) {
             if (transformControls) transformControls.setMode(mode);
-            document.getElementById('mode-translate').classList.toggle('active', mode === 'translate');
-            document.getElementById('mode-scale').classList.toggle('active', mode === 'scale');
+            var btnT = document.getElementById('mode-translate');
+            var btnS = document.getElementById('mode-scale');
+            if (btnT) btnT.classList.toggle('active', mode === 'translate');
+            if (btnS) btnS.classList.toggle('active', mode === 'scale');
         };
 
         window.deleteSelectedFurniture = function() {
-            if (selectedFurniture) {
-                transformControls.detach();
+            if (selectedFurniture && scene) {
+                if (transformControls) transformControls.detach();
                 scene.remove(selectedFurniture);
-                furnitureObjects = furnitureObjects.filter(o => o !== selectedFurniture);
+                furnitureObjects = furnitureObjects.filter(function(o) { return o !== selectedFurniture; });
                 selectedFurniture = null;
-                document.getElementById('status-text').innerText = "Deleted Selected Furniture Piece";
+                var el = document.getElementById('status-text');
+                if (el) el.innerText = "Deleted Selected Furniture Piece";
             }
         };
 
@@ -168,22 +176,22 @@
         };
 
         window.changeRimColor = function(hexStr) {
-            const hex = parseInt(hexStr, 16);
+            var hex = parseInt(hexStr, 16);
             if (rimMaterial) rimMaterial.color.setHex(hex);
-            rimMeshes.forEach(m => m.material && m.material.color.setHex(hex));
+            rimMeshes.forEach(function(m) { if (m.material) m.material.color.setHex(hex); });
         };
 
         window.changeTyreColor = function(hexStr) {
-            const hex = parseInt(hexStr, 16);
+            var hex = parseInt(hexStr, 16);
             if (tyreMaterial) tyreMaterial.color.setHex(hex);
-            tyreMeshes.forEach(m => m.material && m.material.color.setHex(hex));
+            tyreMeshes.forEach(function(m) { if (m.material) m.material.color.setHex(hex); });
         };
 
         window.toggleBulkhead = function() {
             if (!vanGroup) return;
             bulkheadVisible = !bulkheadVisible;
-            bulkheadMeshes.forEach(mesh => mesh.visible = bulkheadVisible);
-            const btn = document.getElementById('bulkhead-toggle');
+            bulkheadMeshes.forEach(function(mesh) { mesh.visible = bulkheadVisible; });
+            var btn = document.getElementById('bulkhead-toggle');
             if (btn) {
                 btn.innerText = bulkheadVisible ? "Bulkhead: Included" : "Bulkhead: Hidden";
                 btn.classList.toggle('active', !bulkheadVisible);
@@ -191,8 +199,8 @@
         };
 
         window.setViewMode = function(mode) {
-            const btn3d = document.getElementById('view-3d');
-            const btnTop = document.getElementById('view-top');
+            var btn3d = document.getElementById('view-3d');
+            var btnTop = document.getElementById('view-top');
             if (btn3d) btn3d.classList.toggle('active', mode === '3d');
             if (btnTop) btnTop.classList.toggle('active', mode === 'top');
 
@@ -200,4 +208,352 @@
                 if (mode === 'top') {
                     camera.position.set(0, 10, 0);
                     controls.target.set(0, 0, 0);
-                    document.getElementById('cam-height-slider').value = 10
+                    var slider = document.getElementById('cam-height-slider');
+                    var readout = document.getElementById('height-readout');
+                    if (slider) slider.value = 10.0;
+                    if (readout) readout.innerText = "10.0m";
+                } else {
+                    camera.position.set(6.5, 4.2, 7.5);
+                    controls.target.set(0, 0.8, 0);
+                    var slider2 = document.getElementById('cam-height-slider');
+                    var readout2 = document.getElementById('height-readout');
+                    if (slider2) slider2.value = 4.2;
+                    if (readout2) readout2.innerText = "4.2m";
+                }
+                controls.update();
+            }
+        };
+
+        window.spawnFurniture = function(type) {
+            if (!scene) return;
+
+            var geom, color;
+            if (type === 'bed') {
+                geom = new THREE.BoxGeometry(1.4, 0.45, 1.8);
+                color = 0x3b82f6;
+            } else if (type === 'kitchen') {
+                geom = new THREE.BoxGeometry(0.5, 0.85, 1.2);
+                color = 0x10b981;
+            } else if (type === 'sofa') {
+                geom = new THREE.BoxGeometry(0.6, 0.45, 1.5);
+                color = 0xf59e0b;
+            } else {
+                geom = new THREE.BoxGeometry(0.5, 1.4, 0.6);
+                color = 0x8b5cf6;
+            }
+
+            var mat = new THREE.MeshStandardMaterial({ color: color, roughness: 0.5 });
+            var item = new THREE.Mesh(geom, mat);
+            item.position.set(0, 0.35, -0.5);
+            scene.add(item);
+            furnitureObjects.push(item);
+
+            selectedFurniture = item;
+            if (transformControls) transformControls.attach(item);
+
+            var el = document.getElementById('status-text');
+            if (el) el.innerText = "Placed 3D " + type.toUpperCase() + ". Drag handles to move/scale!";
+        };
+    </script>
+</head>
+<body>
+    <div id="canvas-container"></div>
+
+    <!-- Vertical Relative Camera Height Control Bar -->
+    <div id="height-slider-container">
+        <span class="height-label">Height</span>
+        <div class="vertical-slider-wrapper">
+            <input type="range" id="cam-height-slider" min="0.2" max="8.0" step="0.1" value="4.2" oninput="updateCameraHeight(this.value)">
+        </div>
+        <span id="height-readout" class="height-val">4.2m</span>
+    </div>
+
+    <div id="ui-sidebar">
+        <div class="app-header">
+            <h1>Van Spacer Studio</h1>
+            <span class="version-tag">v6.5 Dynamic Engine</span>
+        </div>
+
+        <div class="accordion-item">
+            <div class="accordion-header" onclick="toggleAccordion(this)">1. Chassis & Views</div>
+            <div class="accordion-content">
+                <div>
+                    <label for="wheelbase">Vehicle Model</label>
+                    <select id="wheelbase">
+                        <option value="L1">Ford Transit Custom L1 (SWB)</option>
+                        <option value="L2">Ford Transit Custom L2 (LWB)</option>
+                    </select>
+                </div>
+                <div>
+                    <label>View Mode</label>
+                    <button id="view-3d" class="active" onclick="setViewMode('3d')">3D Orbit Mode</button>
+                    <button id="view-top" style="margin-top:4px;" onclick="setViewMode('top')">2D Top Floorplan</button>
+                </div>
+                <div>
+                    <label for="paint-color">Van Paint Colour</label>
+                    <select id="paint-color" onchange="changeVanColor(this.value)">
+                        <option value="0x4b5563" selected>Steel Grey (High Contrast)</option>
+                        <option value="0x1f2937">Magnetic Charcoal Dark</option>
+                        <option value="0x9ca3af">Moondust Silver</option>
+                        <option value="0x1e3a8a">Diffused Slate Blue</option>
+                        <option value="0xe5e7eb">Frozen White</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="rim-color">Wheel Rim Colour</label>
+                    <select id="rim-color" onchange="changeRimColor(this.value)">
+                        <option value="0x9ca3af" selected>Silver Alloy</option>
+                        <option value="0x111827">Gloss / Satin Black</option>
+                        <option value="0x4b5563">Steel Grey</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="tyre-color">Tyre Rubber Colour</label>
+                    <select id="tyre-color" onchange="changeTyreColor(this.value)">
+                        <option value="0x111827" selected>Matte Black Rubber</option>
+                        <option value="0x1f2937">Dark Slate Tyre</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Roof Cut Height</label>
+                    <input type="range" id="clip-slider" min="0.2" max="2.2" step="0.05" value="1.45" oninput="updateCutaway(this.value)">
+                </div>
+                <div>
+                    <button id="cutaway-toggle" class="primary" onclick="toggleCutawayPlane()">Toggle Roof Cutaway</button>
+                </div>
+                <div>
+                    <button id="bulkhead-toggle" onclick="toggleBulkhead()">Bulkhead: Included</button>
+                </div>
+                <div>
+                    <button id="measure-toggle" style="background:#0284c7; margin-top:6px;" onclick="toggleMeasureTool()">Laser Measure: OFF</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="accordion-item">
+            <div class="accordion-header" onclick="toggleAccordion(this)">2. Asset Library</div>
+            <div class="accordion-content">
+                <div class="library-grid">
+                    <div class="item-card" onclick="spawnFurniture('bed')">
+                        <strong>Fixed Platform Bed</strong>
+                        <span style="color:#64748b;">1.8m x 1.4m</span>
+                    </div>
+                    <div class="item-card" onclick="spawnFurniture('kitchen')">
+                        <strong>Kitchenette Unit</strong>
+                        <span style="color:#64748b;">1.2m x 0.5m</span>
+                    </div>
+                    <div class="item-card" onclick="spawnFurniture('sofa')">
+                        <strong>Bench / Sofa Bed</strong>
+                        <span style="color:#64748b;">1.5m x 0.6m</span>
+                    </div>
+                    <div class="item-card" onclick="spawnFurniture('cabinet')">
+                        <strong>Tall Cabinet</strong>
+                        <span style="color:#64748b;">0.6m x 0.5m</span>
+                    </div>
+                </div>
+
+                <div style="margin-top: 10px; border-top: 1px solid #334155; padding-top: 8px;">
+                    <label>Furniture Gizmo Mode</label>
+                    <div class="gizmo-controls">
+                        <button id="mode-translate" class="active" onclick="setGizmoMode('translate')">Move (Position)</button>
+                        <button id="mode-scale" onclick="setGizmoMode('scale')">Scale (Size)</button>
+                    </div>
+                    <button style="margin-top: 6px; background: #dc2626; border-color: #ef4444;" onclick="deleteSelectedFurniture()">Delete Selected Piece</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="info-banner">
+        Status: <span id="status-text" class="highlight">Initializing Engine...</span>
+    </div>
+
+    <script>
+        window.addEventListener('click', function(event) {
+            if (event.clientX > window.innerWidth - 340 || event.clientX < 80) return;
+            if (!camera || !scene) return;
+
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+
+            if (measureMode && vanGroup) {
+                var intersects = raycaster.intersectObjects(vanGroup.children, true);
+                if (intersects.length > 0) {
+                    var p = intersects[0].point;
+                    measurePoints.push(p);
+
+                    if (measurePoints.length === 2) {
+                        var dist = measurePoints[0].distanceTo(measurePoints[1]);
+                        var mm = (dist * 1000).toFixed(0);
+                        var meters = dist.toFixed(2);
+
+                        var lineGeom = new THREE.BufferGeometry().setFromPoints(measurePoints);
+                        var lineMat = new THREE.LineBasicMaterial({ color: 0xef4444, linewidth: 5 });
+                        var laserLine = new THREE.Line(lineGeom, lineMat);
+                        
+                        if (activeLaserGroup) activeLaserGroup.add(laserLine);
+
+                        var el = document.getElementById('status-text');
+                        if (el) el.innerText = "Laser Line Retained: " + meters + "m (" + mm + " mm)";
+                        measurePoints = [];
+                    } else {
+                        var el2 = document.getElementById('status-text');
+                        if (el2) el2.innerText = "Point 1 Set! Click Point 2 to create red laser line.";
+                    }
+                }
+                return;
+            }
+
+            if (furnitureObjects.length > 0) {
+                var furnitureHits = raycaster.intersectObjects(furnitureObjects, true);
+                if (furnitureHits.length > 0) {
+                    selectedFurniture = furnitureHits[0].object;
+                    if (transformControls) transformControls.attach(selectedFurniture);
+                    var el3 = document.getElementById('status-text');
+                    if (el3) el3.innerText = "Selected Furniture Piece - Use handles to Move/Scale";
+                }
+            }
+        });
+
+        window.addEventListener('DOMContentLoaded', function() {
+            var container = document.getElementById('canvas-container');
+            var statusText = document.getElementById('status-text');
+
+            try {
+                scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x0f172a);
+
+                camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 100);
+                camera.position.set(6.5, 4.2, 7.5);
+                scene.add(camera);
+
+                renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                renderer.toneMapping = THREE.ACESFilmicToneMapping;
+                renderer.toneMappingExposure = 1.0;
+                renderer.localClippingEnabled = true;
+                container.appendChild(renderer.domElement);
+
+                controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.target.set(0, 0.8, 0);
+
+                controls.addEventListener('change', function() {
+                    var slider = document.getElementById('cam-height-slider');
+                    var readout = document.getElementById('height-readout');
+                    if (slider && camera) {
+                        slider.value = camera.position.y;
+                        if (readout) readout.innerText = camera.position.y.toFixed(1) + "m";
+                    }
+                });
+
+                transformControls = new THREE.TransformControls(camera, renderer.domElement);
+                transformControls.addEventListener('dragging-changed', function(event) {
+                    controls.enabled = !event.value;
+                });
+                scene.add(transformControls);
+
+                clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1.45);
+
+                // --- CAMERA-ATTACHED HEADLIGHT (Light follows view 360 degrees) ---
+                var cameraLight = new THREE.DirectionalLight(0xffffff, 1.3);
+                cameraLight.position.set(0, 2, 4);
+                camera.add(cameraLight);
+
+                var hemiLight = new THREE.HemisphereLight(0xffffff, 0x334155, 0.9);
+                scene.add(hemiLight);
+
+                var grid = new THREE.GridHelper(14, 28, 0x0284c7, 0x334155);
+                grid.position.y = -0.01;
+                scene.add(grid);
+
+                if (statusText) statusText.innerText = "Requesting GLB Model...";
+
+                var gltfLoader = new THREE.GLTFLoader();
+                var dracoLoader = new THREE.DRACOLoader();
+                dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/libs/draco/');
+                gltfLoader.setDRACOLoader(dracoLoader);
+
+                bodyMaterial = new THREE.MeshStandardMaterial({
+                    color: 0x4b5563, roughness: 0.45, metalness: 0.35, side: THREE.DoubleSide, clippingPlanes: [clipPlane]
+                });
+                tyreMaterial = new THREE.MeshStandardMaterial({
+                    color: 0x111827, roughness: 0.9, metalness: 0.05, side: THREE.DoubleSide, clippingPlanes: [clipPlane]
+                });
+                rimMaterial = new THREE.MeshStandardMaterial({
+                    color: 0x9ca3af, roughness: 0.3, metalness: 0.7, side: THREE.DoubleSide, clippingPlanes: [clipPlane]
+                });
+                glassMaterial = new THREE.MeshStandardMaterial({
+                    color: 0xffffff, transparent: true, opacity: 0.35, roughness: 0.1, metalness: 0.9, side: THREE.DoubleSide, clippingPlanes: [clipPlane]
+                });
+                seatMaterial = new THREE.MeshStandardMaterial({
+                    color: 0x374151, roughness: 0.7, metalness: 0.1, side: THREE.DoubleSide, clippingPlanes: [clipPlane]
+                });
+
+                function processAndAddGLB(gltf) {
+                    vanGroup = gltf.scene;
+                    vanGroup.rotation.x = -Math.PI / 2;
+
+                    var box = new THREE.Box3().setFromObject(vanGroup);
+                    var size = box.getSize(new THREE.Vector3());
+                    var scaleFactor = 4.97 / Math.max(size.x, size.y, size.z);
+                    vanGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
+
+                    var scaledBox = new THREE.Box3().setFromObject(vanGroup);
+                    var scaledCenter = scaledBox.getCenter(new THREE.Vector3());
+                    vanGroup.position.x = -scaledCenter.x;
+                    vanGroup.position.y = -scaledBox.min.y;
+                    vanGroup.position.z = -scaledCenter.z;
+
+                    rimMeshes = []; tyreMeshes = []; bulkheadMeshes = [];
+
+                    vanGroup.traverse(function(child) {
+                        if (child.isMesh) {
+                            child.geometry.computeVertexNormals();
+                            var name = child.name.toLowerCase();
+
+                            if (name.includes('bulkhead')) bulkheadMeshes.push(child);
+                            if (name.includes('rims') || name.includes('rim')) { child.material = rimMaterial; rimMeshes.push(child); }
+                            else if (name.includes('tyres') || name.includes('tyre') || name.includes('tire')) { child.material = tyreMaterial; tyreMeshes.push(child); }
+                            else if (name.includes('glass') || name.includes('window') || name.includes('windscreen')) child.material = glassMaterial;
+                            else if (name.includes('seat')) child.material = seatMaterial;
+                            else child.material = bodyMaterial;
+                        }
+                    });
+
+                    scene.add(vanGroup);
+                    if (statusText) statusText.innerText = "Loaded Transit Custom - v6.5 Active!";
+                }
+
+                gltfLoader.load(
+                    'assets/models/ford-transit-custom-optimized.glb',
+                    function(gltf) { processAndAddGLB(gltf); },
+                    undefined,
+                    function() {
+                        gltfLoader.load('assets/models/ford-transit-custom-optimised.glb', function(gltf) { processAndAddGLB(gltf); });
+                    }
+                );
+
+                window.addEventListener('resize', function() {
+                    camera.aspect = window.innerWidth / window.innerHeight;
+                    camera.updateProjectionMatrix();
+                    renderer.setSize(window.innerWidth, window.innerHeight);
+                });
+
+                function animate() {
+                    requestAnimationFrame(animate);
+                    if (controls) controls.update();
+                    if (renderer && scene && camera) renderer.render(scene, camera);
+                }
+                animate();
+
+            } catch (err) {
+                console.error("Studio Init Error:", err);
+                if (statusText) statusText.innerText = "Init Error: " + err.message;
+            }
+        });
+    </script>
+</body>
+</html>
