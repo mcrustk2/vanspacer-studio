@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v7.3] Van Spacer Studio - Live 3D Builder</title>
+    <title>[v7.4 Precision] Van Spacer Studio - Live 3D Builder</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
@@ -122,22 +122,23 @@
             document.getElementById('status-text').innerText = clippingEnabled ? "Roof Cutaway Active" : "Full Van Active";
         };
 
+        // Creates depth-unclipped 3D Laser Line with Anchor Spheres
         function create3DLaserSegment(p1, p2, isTracking = false) {
             const group = new THREE.Group();
 
             const lineGeom = new THREE.BufferGeometry().setFromPoints([p1, p2]);
             const lineMat = new THREE.LineBasicMaterial({
                 color: 0xef4444,
-                linewidth: 3,
+                linewidth: 4,
                 depthTest: false,
                 transparent: true,
-                opacity: isTracking ? 0.7 : 1.0
+                opacity: isTracking ? 0.75 : 1.0
             });
             const line = new THREE.Line(lineGeom, lineMat);
-            line.renderOrder = 999;
+            line.renderOrder = 9999;
             group.add(line);
 
-            const sphereGeom = new THREE.SphereGeometry(0.025, 16, 16);
+            const sphereGeom = new THREE.SphereGeometry(0.02, 16, 16);
             const sphereMat = new THREE.MeshBasicMaterial({
                 color: 0xef4444,
                 depthTest: false,
@@ -147,12 +148,12 @@
 
             const s1 = new THREE.Mesh(sphereGeom, sphereMat);
             s1.position.copy(p1);
-            s1.renderOrder = 1000;
+            s1.renderOrder = 10000;
             group.add(s1);
 
             const s2 = new THREE.Mesh(sphereGeom, sphereMat);
             s2.position.copy(p2);
-            s2.renderOrder = 1000;
+            s2.renderOrder = 10000;
             group.add(s2);
 
             return group;
@@ -307,7 +308,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v7.3 Standardized Precision</span>
+            <span class="version-tag">v7.4 Normal Validated</span>
         </div>
 
         <!-- ACCORDION 1: CHASSIS & VIEWS -->
@@ -414,7 +415,8 @@
     </div>
 
     <script>
-        function getRaycastHit(event) {
+        // Surface Normal Validated Raycasting (Guarantees Outer Exterior Face Hit Only)
+        function getValidatedSurfaceHit(event) {
             if (!vanGroup || !camera) return null;
 
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -423,8 +425,18 @@
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObjects(vanGroup.children, true);
 
-            if (intersects.length > 0) {
-                return intersects[0].point.clone();
+            for (let i = 0; i < intersects.length; i++) {
+                const hit = intersects[i];
+                if (hit.object && hit.object.visible && hit.face) {
+                    // Check surface normal against ray direction to enforce front-facing exterior surface
+                    const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+                    const rayDir = raycaster.ray.direction.clone();
+                    
+                    if (worldNormal.dot(rayDir) < 0) {
+                        // Extract absolute, frozen 3D world space coordinate
+                        return hit.point.clone();
+                    }
+                }
             }
             return null;
         }
@@ -433,13 +445,13 @@
         window.addEventListener('mousemove', (event) => {
             if (!measureMode || !firstPoint) return;
 
-            const currentHover = getRaycastHit(event);
+            const currentHover = getValidatedSurfaceHit(event);
             if (currentHover) {
                 if (liveTrackingGroup) scene.remove(liveTrackingGroup);
                 liveTrackingGroup = create3DLaserSegment(firstPoint, currentHover, true);
                 scene.add(liveTrackingGroup);
 
-                // 1 Scene Unit = 1 Meter = 100 Centimeters
+                // Exact physical distance in centimeters (1 World Unit = 100 cm)
                 const distCm = (firstPoint.distanceTo(currentHover) * 100).toFixed(2);
                 document.getElementById('status-text').innerText = `Laser Tracking: ${distCm} cm (Click to Lock)`;
             }
@@ -451,7 +463,7 @@
             if (!camera || !scene) return;
 
             if (measureMode) {
-                const hitPoint = getRaycastHit(event);
+                const hitPoint = getValidatedSurfaceHit(event);
                 if (hitPoint) {
                     if (!firstPoint) {
                         firstPoint = hitPoint;
@@ -564,25 +576,24 @@
                 function processAndAddGLB(gltf) {
                     vanGroup = gltf.scene;
 
-                    // Standardize orientation (-90 deg on X)
                     vanGroup.rotation.x = -Math.PI / 2;
                     vanGroup.updateMatrixWorld(true);
 
-                    // Compute overall bounding box in meters
                     const box = new THREE.Box3().setFromObject(vanGroup);
                     const size = box.getSize(new THREE.Vector3());
                     const rawMaxDimension = Math.max(size.x, size.y, size.z);
 
-                    // Scale to exact Ford Transit Custom SWB length (4.973 meters = 497.30 cm)
+                    // Scale to exact Ford Transit Custom SWB real length (4.973 meters = 497.30 cm)
                     const targetScale = 4.973 / rawMaxDimension;
                     vanGroup.scale.set(targetScale, targetScale, targetScale);
 
-                    // Re-align ground base
                     const scaledBox = new THREE.Box3().setFromObject(vanGroup);
                     const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
                     vanGroup.position.x = -scaledCenter.x;
                     vanGroup.position.y = -scaledBox.min.y;
                     vanGroup.position.z = -scaledCenter.z;
+
+                    vanGroup.updateMatrixWorld(true);
 
                     rimMeshes = []; tyreMeshes = []; bulkheadMeshes = [];
 
@@ -601,7 +612,7 @@
                     });
 
                     scene.add(vanGroup);
-                    statusText.innerText = "Loaded Transit Custom - v7.3 Engine Active!";
+                    statusText.innerText = "Loaded Transit Custom - v7.4 Engine Active!";
                 }
 
                 gltfLoader.load(
