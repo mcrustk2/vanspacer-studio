@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v7.4 Precision] Van Spacer Studio - Live 3D Builder</title>
+    <title>[v7.5 World Anchor] Van Spacer Studio</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
@@ -308,7 +308,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v7.4 Normal Validated</span>
+            <span class="version-tag">v7.5 World Anchor</span>
         </div>
 
         <!-- ACCORDION 1: CHASSIS & VIEWS -->
@@ -415,8 +415,8 @@
     </div>
 
     <script>
-        // Surface Normal Validated Raycasting (Guarantees Outer Exterior Face Hit Only)
-        function getValidatedSurfaceHit(event) {
+        // Direct Raycast Surface Hit (No Normal Filtering Rejection)
+        function getSurfaceHit(event) {
             if (!vanGroup || !camera) return null;
 
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -425,18 +425,9 @@
             raycaster.setFromCamera(mouse, camera);
             const intersects = raycaster.intersectObjects(vanGroup.children, true);
 
-            for (let i = 0; i < intersects.length; i++) {
-                const hit = intersects[i];
-                if (hit.object && hit.object.visible && hit.face) {
-                    // Check surface normal against ray direction to enforce front-facing exterior surface
-                    const worldNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
-                    const rayDir = raycaster.ray.direction.clone();
-                    
-                    if (worldNormal.dot(rayDir) < 0) {
-                        // Extract absolute, frozen 3D world space coordinate
-                        return hit.point.clone();
-                    }
-                }
+            if (intersects.length > 0) {
+                // Instantly returns 3D World Position vector
+                return intersects[0].point.clone();
             }
             return null;
         }
@@ -445,7 +436,7 @@
         window.addEventListener('mousemove', (event) => {
             if (!measureMode || !firstPoint) return;
 
-            const currentHover = getValidatedSurfaceHit(event);
+            const currentHover = getSurfaceHit(event);
             if (currentHover) {
                 if (liveTrackingGroup) scene.remove(liveTrackingGroup);
                 liveTrackingGroup = create3DLaserSegment(firstPoint, currentHover, true);
@@ -463,7 +454,7 @@
             if (!camera || !scene) return;
 
             if (measureMode) {
-                const hitPoint = getValidatedSurfaceHit(event);
+                const hitPoint = getSurfaceHit(event);
                 if (hitPoint) {
                     if (!firstPoint) {
                         firstPoint = hitPoint;
@@ -612,7 +603,7 @@
                     });
 
                     scene.add(vanGroup);
-                    statusText.innerText = "Loaded Transit Custom - v7.4 Engine Active!";
+                    statusText.innerText = "Loaded Transit Custom - v7.5 World Anchor Active!";
                 }
 
                 gltfLoader.load(
