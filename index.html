@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v6.9] Van Spacer Studio - Live 3D Builder</title>
+    <title>[v7.0] Van Spacer Studio - Live 3D Builder</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
@@ -88,7 +88,6 @@
     <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/DRACOLoader.js"></script>
 
     <script>
-        // Global variables and scope bindings
         let renderer, camera, scene, controls, transformControls, clipPlane, vanGroup = null;
         let bodyMaterial, rimMaterial, tyreMaterial, glassMaterial, seatMaterial;
         let rimMeshes = [], tyreMeshes = [], bulkheadMeshes = [];
@@ -98,7 +97,7 @@
         // Laser tracking state
         let firstWorldPoint = null;
         let hoverWorldPoint = null;
-        let persistentPairs = []; // Locked laser line pairs
+        let persistentPairs = [];
 
         let laserCtx = null;
         let raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
@@ -126,7 +125,16 @@
             document.getElementById('status-text').innerText = clippingEnabled ? "Roof Cutaway Active" : "Full Van Active";
         };
 
-        // Project a 3D World Vector to 2D Screen Canvas Coordinates
+        // Calculates exact physical distance in centimeters factoring in model scale
+        function calculateCmDistance(p1, p2) {
+            if (!vanGroup) return "0.00";
+            const rawDist = p1.distanceTo(p2);
+            // vanGroup.scale.x normalizes CAD geometry to world meters (1 unit = 100cm)
+            const cmVal = rawDist * vanGroup.scale.x * 100;
+            return cmVal.toFixed(2);
+        }
+
+        // Project 3D World Vector to 2D Screen Canvas
         function worldToScreen(worldVec) {
             if (!camera) return { x: 0, y: 0 };
             const v = worldVec.clone();
@@ -137,7 +145,6 @@
             };
         }
 
-        // Draw 2D Overlay Laser Lines
         function drawLaserCanvas() {
             if (!laserCtx) return;
             laserCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
@@ -145,7 +152,7 @@
             if (!measureMode) return;
 
             laserCtx.lineWidth = 4;
-            laserCtx.strokeStyle = '#ef4444'; // Bright Red Laser
+            laserCtx.strokeStyle = '#ef4444';
             laserCtx.fillStyle = '#ef4444';
 
             // 1. Draw Persistent Locked Lines
@@ -158,7 +165,6 @@
                 laserCtx.lineTo(p2.x, p2.y);
                 laserCtx.stroke();
 
-                // Start/End Dots
                 laserCtx.beginPath(); laserCtx.arc(p1.x, p1.y, 5, 0, Math.PI * 2); laserCtx.fill();
                 laserCtx.beginPath(); laserCtx.arc(p2.x, p2.y, 5, 0, Math.PI * 2); laserCtx.fill();
             });
@@ -169,11 +175,11 @@
                 const p2 = worldToScreen(hoverWorldPoint);
 
                 laserCtx.beginPath();
-                laserCtx.setLineDash([6, 6]); // Dashed line for dynamic tracking
+                laserCtx.setLineDash([6, 6]);
                 laserCtx.moveTo(p1.x, p1.y);
                 laserCtx.lineTo(p2.x, p2.y);
                 laserCtx.stroke();
-                laserCtx.setLineDash([]); // Reset line dash
+                laserCtx.setLineDash([]);
 
                 laserCtx.beginPath(); laserCtx.arc(p1.x, p1.y, 6, 0, Math.PI * 2); laserCtx.fill();
                 laserCtx.beginPath(); laserCtx.arc(p2.x, p2.y, 4, 0, Math.PI * 2); laserCtx.fill();
@@ -320,7 +326,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v6.9 Matrix Calibrated</span>
+            <span class="version-tag">v7.0 Normalized Precision</span>
         </div>
 
         <!-- ACCORDION 1: CHASSIS & VIEWS -->
@@ -427,7 +433,7 @@
     </div>
 
     <script>
-        // Real-time mouse movement listener for dynamic laser tracking
+        // Mouse move listener for live laser tracking
         window.addEventListener('mousemove', (event) => {
             if (!measureMode || !firstWorldPoint || !vanGroup || !camera) return;
 
@@ -438,18 +444,14 @@
             const intersects = raycaster.intersectObjects(vanGroup.children, true);
 
             if (intersects.length > 0) {
-                // Correct for matrix World transformation
-                const rawPoint = intersects[0].point;
-                hoverWorldPoint = rawPoint.clone();
-
-                // Calculate exact physical distance in centimeters (1 World Unit = 100 cm)
-                const distCm = (firstWorldPoint.distanceTo(hoverWorldPoint) * 100).toFixed(2);
+                hoverWorldPoint = intersects[0].point.clone();
+                const distCm = calculateCmDistance(firstWorldPoint, hoverWorldPoint);
                 document.getElementById('status-text').innerText = `Laser Tracking: ${distCm} cm (Click to Lock)`;
                 drawLaserCanvas();
             }
         });
 
-        // Click interaction handler
+        // Click listener for anchoring points
         window.addEventListener('click', (event) => {
             if (event.clientX > window.innerWidth - 340 || event.clientX < 80) return;
             if (!camera || !scene) return;
@@ -462,17 +464,15 @@
             if (measureMode && vanGroup) {
                 const intersects = raycaster.intersectObjects(vanGroup.children, true);
                 if (intersects.length > 0) {
-                    const rawPoint = intersects[0].point;
-                    const clickedWorldPoint = rawPoint.clone();
+                    const clickedPoint = intersects[0].point.clone();
 
                     if (!firstWorldPoint) {
-                        firstWorldPoint = clickedWorldPoint;
+                        firstWorldPoint = clickedPoint;
                         document.getElementById('status-text').innerText = `First Point Set! Move cursor to track laser distance.`;
                     } else {
-                        const finalDistCm = (firstWorldPoint.distanceTo(clickedWorldPoint) * 100).toFixed(2);
+                        const finalDistCm = calculateCmDistance(firstWorldPoint, clickedPoint);
 
-                        // Save persistent pair for 2D overlay rendering
-                        persistentPairs.push({ p1: firstWorldPoint.clone(), p2: clickedWorldPoint.clone() });
+                        persistentPairs.push({ p1: firstWorldPoint.clone(), p2: clickedPoint.clone() });
 
                         firstWorldPoint = null;
                         hoverWorldPoint = null;
@@ -529,7 +529,7 @@
                         slider.value = camera.position.y;
                         if (readout) readout.innerText = `${(camera.position.y * 100).toFixed(2)} cm`;
                     }
-                    drawLaserCanvas(); // Redraw 2D laser overlay dynamically during orbit
+                    drawLaserCanvas();
                 });
 
                 transformControls = new THREE.TransformControls(camera, renderer.domElement);
@@ -540,7 +540,7 @@
 
                 clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1.45);
 
-                // Camera Headlight
+                // Dynamic camera headlight
                 const cameraLight = new THREE.DirectionalLight(0xffffff, 1.2);
                 cameraLight.position.set(0, 2, 4);
                 camera.add(cameraLight);
@@ -609,7 +609,7 @@
                     });
 
                     scene.add(vanGroup);
-                    statusText.innerText = "Loaded Transit Custom - v6.9 Matrix Calibrated Engine!";
+                    statusText.innerText = "Loaded Transit Custom - v7.0 Engine Active!";
                 }
 
                 gltfLoader.load(
