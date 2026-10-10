@@ -3,11 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>[v6.8] Van Spacer Studio - Live 3D Builder</title>
+    <title>[v6.9] Van Spacer Studio - Live 3D Builder</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #e2e8f0; color: #1e293b; }
         #canvas-container { width: 100vw; height: 100vh; display: block; position: absolute; top:0; left:0; z-index: 1; }
+        #laser-canvas { width: 100vw; height: 100vh; display: block; position: absolute; top:0; left:0; z-index: 2; pointer-events: none; }
         
         #ui-sidebar {
             position: absolute; top: 0; right: 0; width: 340px; height: 100vh;
@@ -89,20 +90,17 @@
     <script>
         // Global variables and scope bindings
         let renderer, camera, scene, controls, transformControls, clipPlane, vanGroup = null;
-        let bodyMaterial, rimMaterial, tyreMaterial, glassMaterial, seatMaterial, laserMaterial;
+        let bodyMaterial, rimMaterial, tyreMaterial, glassMaterial, seatMaterial;
         let rimMeshes = [], tyreMeshes = [], bulkheadMeshes = [];
         let furnitureObjects = [], selectedFurniture = null;
         let clippingEnabled = true, bulkheadVisible = true, measureMode = false;
         
-        // Exact Physical Calibration: Ford Transit Custom L1 SWB real length = 497.30 cm
-        const TRANSIT_REAL_LENGTH_CM = 497.30;
-        let WORLD_SCALE_RATIO = 100.0; // Calibrated dynamically upon loading model
+        // Laser tracking state
+        let firstWorldPoint = null;
+        let hoverWorldPoint = null;
+        let persistentPairs = []; // Locked laser line pairs
 
-        // Laser tracking variables
-        let firstPoint = null;
-        let dynamicLaserCylinder = null;
-        let activeLaserGroup = null;
-
+        let laserCtx = null;
         let raycaster = new THREE.Raycaster(), mouse = new THREE.Vector2();
 
         window.toggleAccordion = function(header) { header.parentElement.classList.toggle('collapsed'); };
@@ -118,7 +116,7 @@
                 controls.update();
             }
             const readout = document.getElementById('height-readout');
-            if (readout) readout.innerText = `${(h * WORLD_SCALE_RATIO).toFixed(2)} cm`;
+            if (readout) readout.innerText = `${(h * 100).toFixed(2)} cm`;
         };
 
         window.toggleCutawayPlane = function() {
@@ -128,61 +126,81 @@
             document.getElementById('status-text').innerText = clippingEnabled ? "Roof Cutaway Active" : "Full Van Active";
         };
 
-        // Creates a 3D cylindrical laser beam visible over all geometry
-        function createLaserCylinder(p1, p2) {
-            const distance = p1.distanceTo(p2);
-            if (distance < 0.001) return null;
+        // Project a 3D World Vector to 2D Screen Canvas Coordinates
+        function worldToScreen(worldVec) {
+            if (!camera) return { x: 0, y: 0 };
+            const v = worldVec.clone();
+            v.project(camera);
+            return {
+                x: (v.x * 0.5 + 0.5) * window.innerWidth,
+                y: -(v.y * 0.5 - 0.5) * window.innerHeight
+            };
+        }
 
-            const geom = new THREE.CylinderGeometry(0.015, 0.015, distance, 8);
-            const mesh = new THREE.Mesh(geom, laserMaterial);
+        // Draw 2D Overlay Laser Lines
+        function drawLaserCanvas() {
+            if (!laserCtx) return;
+            laserCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 
-            // Position and orient cylinder between p1 and p2
-            const midpoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
-            mesh.position.copy(midpoint);
+            if (!measureMode) return;
 
-            const orientation = new THREE.Matrix4();
-            const dir = new THREE.Vector3().subVectors(p2, p1).normalize();
-            const up = new THREE.Vector3(0, 1, 0);
-            
-            orientation.lookAt(p1, p2, up);
-            mesh.quaternion.setFromRotationMatrix(orientation);
-            mesh.rotation.x += Math.PI / 2; // Align cylinder length along vectors
-            mesh.renderOrder = 999;
+            laserCtx.lineWidth = 4;
+            laserCtx.strokeStyle = '#ef4444'; // Bright Red Laser
+            laserCtx.fillStyle = '#ef4444';
 
-            return mesh;
+            // 1. Draw Persistent Locked Lines
+            persistentPairs.forEach(pair => {
+                const p1 = worldToScreen(pair.p1);
+                const p2 = worldToScreen(pair.p2);
+
+                laserCtx.beginPath();
+                laserCtx.moveTo(p1.x, p1.y);
+                laserCtx.lineTo(p2.x, p2.y);
+                laserCtx.stroke();
+
+                // Start/End Dots
+                laserCtx.beginPath(); laserCtx.arc(p1.x, p1.y, 5, 0, Math.PI * 2); laserCtx.fill();
+                laserCtx.beginPath(); laserCtx.arc(p2.x, p2.y, 5, 0, Math.PI * 2); laserCtx.fill();
+            });
+
+            // 2. Draw Live Rubber-Banding Tracking Line
+            if (firstWorldPoint && hoverWorldPoint) {
+                const p1 = worldToScreen(firstWorldPoint);
+                const p2 = worldToScreen(hoverWorldPoint);
+
+                laserCtx.beginPath();
+                laserCtx.setLineDash([6, 6]); // Dashed line for dynamic tracking
+                laserCtx.moveTo(p1.x, p1.y);
+                laserCtx.lineTo(p2.x, p2.y);
+                laserCtx.stroke();
+                laserCtx.setLineDash([]); // Reset line dash
+
+                laserCtx.beginPath(); laserCtx.arc(p1.x, p1.y, 6, 0, Math.PI * 2); laserCtx.fill();
+                laserCtx.beginPath(); laserCtx.arc(p2.x, p2.y, 4, 0, Math.PI * 2); laserCtx.fill();
+            }
         }
 
         window.toggleMeasureTool = function() {
             measureMode = !measureMode;
-            firstPoint = null;
-
-            if (dynamicLaserCylinder) {
-                scene.remove(dynamicLaserCylinder);
-                dynamicLaserCylinder = null;
-            }
+            firstWorldPoint = null;
+            hoverWorldPoint = null;
 
             const btn = document.getElementById('measure-toggle');
             
             if (!measureMode) {
-                if (activeLaserGroup) {
-                    scene.remove(activeLaserGroup);
-                    activeLaserGroup = null;
-                }
+                persistentPairs = [];
+                if (laserCtx) laserCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
                 if (btn) {
                     btn.innerText = "Laser Measure: OFF";
                     btn.style.background = "#0284c7";
                 }
                 document.getElementById('status-text').innerText = "Laser Tool Disabled & Lines Cleared";
             } else {
-                if (!activeLaserGroup) {
-                    activeLaserGroup = new THREE.Group();
-                    scene.add(activeLaserGroup);
-                }
                 if (btn) {
                     btn.innerText = "Laser Measure: ON (Click Start)";
                     btn.style.background = "#ef4444";
                 }
-                document.getElementById('status-text').innerText = "Click initial point on van to anchor laser beam";
+                document.getElementById('status-text').innerText = "Click initial point on van to anchor laser line";
             }
         };
 
@@ -240,12 +258,12 @@
                     camera.position.set(0, 10, 0);
                     controls.target.set(0, 0, 0);
                     document.getElementById('cam-height-slider').value = 10.0;
-                    document.getElementById('height-readout').innerText = `${(10.0 * WORLD_SCALE_RATIO).toFixed(2)} cm`;
+                    document.getElementById('height-readout').innerText = "1000.00 cm";
                 } else {
                     camera.position.set(6.5, 4.2, 7.5);
                     controls.target.set(0, 0.8, 0);
                     document.getElementById('cam-height-slider').value = 4.2;
-                    document.getElementById('height-readout').innerText = `${(4.2 * WORLD_SCALE_RATIO).toFixed(2)} cm`;
+                    document.getElementById('height-readout').innerText = "420.00 cm";
                 }
                 controls.update();
             }
@@ -288,6 +306,7 @@
 </head>
 <body>
     <div id="canvas-container"></div>
+    <canvas id="laser-canvas"></canvas>
 
     <!-- Vertical Relative Camera Height Control Bar -->
     <div id="height-slider-container">
@@ -301,7 +320,7 @@
     <div id="ui-sidebar">
         <div class="app-header">
             <h1>Van Spacer Studio</h1>
-            <span class="version-tag">v6.8 Calibrated Laser</span>
+            <span class="version-tag">v6.9 Matrix Calibrated</span>
         </div>
 
         <!-- ACCORDION 1: CHASSIS & VIEWS -->
@@ -410,7 +429,7 @@
     <script>
         // Real-time mouse movement listener for dynamic laser tracking
         window.addEventListener('mousemove', (event) => {
-            if (!measureMode || !firstPoint || !vanGroup || !camera) return;
+            if (!measureMode || !firstWorldPoint || !vanGroup || !camera) return;
 
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
@@ -419,14 +438,14 @@
             const intersects = raycaster.intersectObjects(vanGroup.children, true);
 
             if (intersects.length > 0) {
-                const currentHoverPoint = intersects[0].point;
+                // Correct for matrix World transformation
+                const rawPoint = intersects[0].point;
+                hoverWorldPoint = rawPoint.clone();
 
-                if (dynamicLaserCylinder) scene.remove(dynamicLaserCylinder);
-                dynamicLaserCylinder = createLaserCylinder(firstPoint, currentHoverPoint);
-                if (dynamicLaserCylinder) scene.add(dynamicLaserCylinder);
-
-                const liveDistCm = (firstPoint.distanceTo(currentHoverPoint) * WORLD_SCALE_RATIO).toFixed(2);
-                document.getElementById('status-text').innerText = `Laser Tracking: ${liveDistCm} cm (Click to Lock)`;
+                // Calculate exact physical distance in centimeters (1 World Unit = 100 cm)
+                const distCm = (firstWorldPoint.distanceTo(hoverWorldPoint) * 100).toFixed(2);
+                document.getElementById('status-text').innerText = `Laser Tracking: ${distCm} cm (Click to Lock)`;
+                drawLaserCanvas();
             }
         });
 
@@ -443,24 +462,23 @@
             if (measureMode && vanGroup) {
                 const intersects = raycaster.intersectObjects(vanGroup.children, true);
                 if (intersects.length > 0) {
-                    const clickedPoint = intersects[0].point;
+                    const rawPoint = intersects[0].point;
+                    const clickedWorldPoint = rawPoint.clone();
 
-                    if (!firstPoint) {
-                        firstPoint = clickedPoint;
+                    if (!firstWorldPoint) {
+                        firstWorldPoint = clickedWorldPoint;
                         document.getElementById('status-text').innerText = `First Point Set! Move cursor to track laser distance.`;
                     } else {
-                        const finalDistCm = (firstPoint.distanceTo(clickedPoint) * WORLD_SCALE_RATIO).toFixed(2);
+                        const finalDistCm = (firstWorldPoint.distanceTo(clickedWorldPoint) * 100).toFixed(2);
 
-                        const lockedBeam = createLaserCylinder(firstPoint, clickedPoint);
-                        if (lockedBeam && activeLaserGroup) activeLaserGroup.add(lockedBeam);
+                        // Save persistent pair for 2D overlay rendering
+                        persistentPairs.push({ p1: firstWorldPoint.clone(), p2: clickedWorldPoint.clone() });
 
-                        if (dynamicLaserCylinder) {
-                            scene.remove(dynamicLaserCylinder);
-                            dynamicLaserCylinder = null;
-                        }
+                        firstWorldPoint = null;
+                        hoverWorldPoint = null;
 
                         document.getElementById('status-text').innerText = `Laser Measurement Locked: ${finalDistCm} cm`;
-                        firstPoint = null;
+                        drawLaserCanvas();
                     }
                 }
                 return;
@@ -479,6 +497,11 @@
         window.addEventListener('DOMContentLoaded', () => {
             const container = document.getElementById('canvas-container');
             const statusText = document.getElementById('status-text');
+
+            const laserCanvas = document.getElementById('laser-canvas');
+            laserCanvas.width = window.innerWidth;
+            laserCanvas.height = window.innerHeight;
+            laserCtx = laserCanvas.getContext('2d');
 
             try {
                 scene = new THREE.Scene();
@@ -504,8 +527,9 @@
                     const readout = document.getElementById('height-readout');
                     if (slider && camera) {
                         slider.value = camera.position.y;
-                        if (readout) readout.innerText = `${(camera.position.y * WORLD_SCALE_RATIO).toFixed(2)} cm`;
+                        if (readout) readout.innerText = `${(camera.position.y * 100).toFixed(2)} cm`;
                     }
+                    drawLaserCanvas(); // Redraw 2D laser overlay dynamically during orbit
                 });
 
                 transformControls = new THREE.TransformControls(camera, renderer.domElement);
@@ -515,14 +539,6 @@
                 scene.add(transformControls);
 
                 clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1.45);
-
-                // Laser Beam Material: Neon Red, Ignore Depth Buffer so it renders over van surfaces
-                laserMaterial = new THREE.MeshBasicMaterial({
-                    color: 0xef4444,
-                    depthTest: false,
-                    transparent: true,
-                    opacity: 0.95
-                });
 
                 // Camera Headlight
                 const cameraLight = new THREE.DirectionalLight(0xffffff, 1.2);
@@ -565,20 +581,16 @@
 
                     const box = new THREE.Box3().setFromObject(vanGroup);
                     const size = box.getSize(new THREE.Vector3());
-                    const rawMaxDimension = Math.max(size.x, size.y, size.z);
-
-                    // Calibrate Real-World Physical Scale: 1 Three.js World Unit = 100 cm
-                    const scaleFactor = 4.973 / rawMaxDimension;
+                    const scaleFactor = 4.973 / Math.max(size.x, size.y, size.z);
                     vanGroup.scale.set(scaleFactor, scaleFactor, scaleFactor);
-
-                    // Calculate precise scale multiplier (World Units -> cm)
-                    WORLD_SCALE_RATIO = TRANSIT_REAL_LENGTH_CM / 4.973;
 
                     const scaledBox = new THREE.Box3().setFromObject(vanGroup);
                     const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
                     vanGroup.position.x = -scaledCenter.x;
                     vanGroup.position.y = -scaledBox.min.y;
                     vanGroup.position.z = -scaledCenter.z;
+
+                    vanGroup.updateMatrixWorld(true);
 
                     rimMeshes = []; tyreMeshes = []; bulkheadMeshes = [];
 
@@ -597,12 +609,7 @@
                     });
 
                     scene.add(vanGroup);
-                    
-                    // Initial readout calibration
-                    const initialReadout = document.getElementById('height-readout');
-                    if (initialReadout) initialReadout.innerText = `${(4.2 * WORLD_SCALE_RATIO).toFixed(2)} cm`;
-
-                    statusText.innerText = "Loaded Transit Custom - v6.8 Calibrated Engine Active!";
+                    statusText.innerText = "Loaded Transit Custom - v6.9 Matrix Calibrated Engine!";
                 }
 
                 gltfLoader.load(
@@ -618,12 +625,16 @@
                     camera.aspect = window.innerWidth / window.innerHeight;
                     camera.updateProjectionMatrix();
                     renderer.setSize(window.innerWidth, window.innerHeight);
+                    laserCanvas.width = window.innerWidth;
+                    laserCanvas.height = window.innerHeight;
+                    drawLaserCanvas();
                 });
 
                 function animate() {
                     requestAnimationFrame(animate);
                     if (controls) controls.update();
                     if (renderer && scene && camera) renderer.render(scene, camera);
+                    drawLaserCanvas();
                 }
                 animate();
 
